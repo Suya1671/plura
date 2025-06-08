@@ -1,0 +1,18 @@
+/target
+result*
+.envrc
+.env
+!.env.example
+
+# Devenv
+.devenv*
+devenv.local.nix
+
+# direnv
+.direnv
+
+# pre-commit
+.pre-commit-config.yaml
+
+# sqlite dev files
+*.db
