@@ -1,4 +1,5 @@
 pub mod member;
+pub mod message;
 pub mod system;
 pub mod trigger;
 pub mod user;

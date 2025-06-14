@@ -183,7 +183,7 @@ pub async fn oauth_handler(
             }
         }
         Ok(None) => {
-            "CSRF couldn't be linked to a user. Theres a middleman attack at play or I didn't save the token properly".to_owned()
+            "CSRF couldn't be linked to a user. Theres a middleman attack at play or the dev (Suya1671) didn't save the token properly".to_owned()
         }
         Err(e) => {
             error!("Error fetching CSRF token: {:#?}", e);

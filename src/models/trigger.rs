@@ -110,11 +110,11 @@ impl Trigger {
             Trigger,
             r#"
                 SELECT
-                    triggers.id as "id: Id<Trusted>",
-                    triggers.member_id as "member_id: member::Id<Trusted>",
-                    triggers.system_id as "system_id: system::Id<Trusted>",
-                    triggers.text,
-                    triggers.is_prefix
+                    id as "id: Id<Trusted>",
+                    member_id as "member_id: member::Id<Trusted>",
+                    system_id as "system_id: system::Id<Trusted>",
+                    text,
+                    is_prefix
                 FROM
                     triggers
                 WHERE

@@ -4,13 +4,14 @@ use axum::{Extension, body::Bytes, http::Response};
 use error_stack::ResultExt;
 use http_body_util::{BodyExt, Empty, Full, combinators::BoxBody};
 use slack_morphism::prelude::*;
-// use sqlx::SqlitePool;
+use sqlx::SqlitePool;
 use tracing::{debug, error, trace};
 
 use crate::{
     BOT_TOKEN,
     models::{
         member::{Member, TriggeredMember},
+        message::MessageLog,
         system::System,
         user,
     },
@@ -49,28 +50,39 @@ async fn push_event_callback(
     state: SlackClientEventsUserState,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     match event.event {
-        SlackEventCallbackBody::Message(message_event) => {
+        SlackEventCallbackBody::Message(message_event)
+            if message_event
+                .subtype
+                .as_ref()
+                .is_some_and(|subtype| *subtype == SlackMessageEventType::MessageDeleted) =>
+        {
+            let states = state.read().await;
+            let user_state = states.get_user_state::<user::State>().unwrap();
+
+            MessageLog::delete_by_message_id(message_event.deleted_ts.unwrap().0, &user_state.db)
+                .await
+                .attach_printable("Failed to delete message log")?;
+
+            Ok(())
+        }
+        SlackEventCallbackBody::Message(message_event)
+            if message_event.subtype.is_none()
+                || message_event
+                    .subtype
+                    .as_ref()
+                    .is_some_and(|subtype| *subtype == SlackMessageEventType::MessageChanged) =>
+        {
             debug!("Received message event!");
             trace!("Message: {:?}", message_event);
 
             let states = state.read().await;
             let user_state = states.get_user_state::<user::State>().unwrap();
 
-            if message_event
-                .subtype
-                .as_ref()
-                .is_some_and(|subtype| *subtype == SlackMessageEventType::MessageDeleted)
-            {
-                return Ok(());
-            }
-
-            let Some(user_id) = message_event.sender.user else {
+            let Some(user_id) = message_event.sender.user.map(user::Id::new) else {
                 return Ok(());
             };
 
-            let Some(mut system) =
-                System::fetch_by_user_id(&user_state.db, &user::Id::new(user_id)).await?
-            else {
+            let Some(mut system) = System::fetch_by_user_id(&user_state.db, &user_id).await? else {
                 return Ok(());
             };
 
@@ -105,7 +117,7 @@ async fn push_event_callback(
                     content,
                     member,
                     &system,
-                    // &user_state.db,
+                    &user_state.db,
                 )
                 .await?;
 
@@ -126,7 +138,7 @@ async fn push_event_callback(
                     content,
                     member.into(),
                     &system,
-                    // &user_state.db,
+                    &user_state.db,
                 )
                 .await?;
             }
@@ -144,8 +156,8 @@ async fn rewrite_message(
     mut content: SlackMessageContent,
     member: TriggeredMember,
     system: &System,
-    // TODO: log this message in the db for future reference
-    //  db: &SqlitePool,
+    db: &SqlitePool,
+    // TODO: better error handling/custom error enum
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let token = SlackApiToken::new(system.slack_oauth_token.expose().into())
         .with_token_type(SlackApiTokenType::User);
@@ -219,7 +231,7 @@ async fn rewrite_message(
 
     blocks.extend(custom_image_blocks);
 
-    let _res: SlackApiChatPostMessageResponse = bot_session
+    let res: SlackApiChatPostMessageResponse = bot_session
         .http_session_api
         .http_post(
             "chat.postMessage",
@@ -228,6 +240,10 @@ async fn rewrite_message(
         )
         .await
         .attach_printable("Error rewriting message")?;
+
+    MessageLog::insert(member.id, res.ts, db)
+        .await
+        .attach_printable("Could not insert message log")?;
 
     user_session
         .chat_delete(
