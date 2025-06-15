@@ -4,9 +4,10 @@ use error_stack::{Result, ResultExt};
 use oauth2::CsrfToken;
 use slack_morphism::prelude::*;
 use tokio::runtime::Handle;
-use tracing::debug;
+use tracing::{debug, trace};
 
 use crate::{
+    fields,
     models::{system, user},
     oauth::create_oauth_client,
 };
@@ -39,6 +40,7 @@ pub enum CommandError {
 }
 
 impl System {
+    #[tracing::instrument(skip_all)]
     pub async fn run(
         self,
         event: SlackCommandEvent,
@@ -55,13 +57,14 @@ impl System {
         }
     }
 
+    #[tracing::instrument(skip_all, fields(user_id, system_id))]
     async fn get_system_info(
         event: SlackCommandEvent,
         client: Arc<SlackHyperClient>,
         state: SlackClientEventsUserState,
         user: Option<String>,
     ) -> Result<SlackCommandEventResponse, CommandError> {
-        debug!("Getting system info");
+        trace!("Getting system info");
 
         let states = state.read().await;
         let user_state = states.get_user_state::<user::State>().unwrap();
@@ -82,11 +85,16 @@ impl System {
             ));
         };
 
+        fields!(user_id = %&user_id);
+        trace!("Mapped user ID");
+
         let system = system::System::fetch_by_user_id(&user_state.db, &user_id)
             .await
             .change_context(CommandError::Sqlx)?;
 
         if let Some(system) = system {
+            fields!(system_id = %system.id);
+            debug!("Fetched system");
             let fronting_member = system
                 .active_member(&user_state.db)
                 .await
@@ -108,6 +116,7 @@ impl System {
                 ]),
             ))
         } else {
+            debug!("User does not have a system");
             Ok(SlackCommandEventResponse::new(
                 SlackMessageContent::new().with_blocks(slack_blocks![some_into(
                     SlackSectionBlock::new().with_text(md!("This user doesn't have a system!"))
@@ -116,12 +125,13 @@ impl System {
         }
     }
 
+    #[tracing::instrument(skip(event, state), fields(system_id))]
     async fn edit_system_name(
         event: SlackCommandEvent,
         state: SlackClientEventsUserState,
         name: String,
     ) -> Result<SlackCommandEventResponse, CommandError> {
-        debug!("Editing system name {name}");
+        trace!("Editing system name");
 
         let states = state.read().await;
         let user_state = states.get_user_state::<user::State>().unwrap();
@@ -141,40 +151,35 @@ impl System {
             ));
         };
 
-        sqlx::query!(
-            r#"
-            UPDATE systems
-            SET name = $1
-            WHERE id = $2
-            "#,
-            name,
-            system_id
-        )
-        .execute(&user_state.db)
-        .await
-        .change_context(CommandError::Sqlx)?;
+        fields!(system_id = %system_id);
+
+        system_id
+            .rename(&name, &user_state.db)
+            .await
+            .change_context(CommandError::Sqlx)?;
 
         Ok(SlackCommandEventResponse::new(
             SlackMessageContent::new().with_text("Successfully updated system name!".into()),
         ))
     }
 
+    #[tracing::instrument(skip(event, state))]
     async fn create_system(
         event: SlackCommandEvent,
         state: SlackClientEventsUserState,
         name: String,
     ) -> Result<SlackCommandEventResponse, CommandError> {
-        debug!("Creating system {name}");
+        trace!("Creating system");
 
         let states = state.read().await;
         let user_state = states.get_user_state::<user::State>().unwrap();
+        let user_id = user::Id::new(event.user_id);
 
-        // todo: somehow remove this clone with cleaner code in the future`
-        if system::System::fetch_by_user_id(&user_state.db, &user::Id::new(event.user_id.clone()))
+        if let Some(system) = system::System::fetch_by_user_id(&user_state.db, &user_id)
             .await
             .change_context(CommandError::Sqlx)?
-            .is_some()
         {
+            debug!(system_id = %system.id, "User already has a system");
             return Ok(SlackCommandEventResponse::new(
                 SlackMessageContent::new().with_text("You already have a system! If you need to reauthenticate, run /system reauth. If you need to change your system name, run /system rename".into()),
             ));
@@ -182,11 +187,11 @@ impl System {
 
         let oauth_client = create_oauth_client();
 
-        // note: we aren't doing PKCE since this is only ran on a trusted server
+        // Note: we aren't doing PKCE since this is only ran on a trusted server
 
         let (auth_url, csrf_token) = oauth_client
             .authorize_url(CsrfToken::new_random)
-            // so we get a regular token as well. Required by oauth2 for some reason
+            // So we get a regular token as well. Required by oauth2 for some reason
             .add_extra_param("scope", "commands")
             .add_extra_param("user_scope", "users.profile:read,chat:write")
             .url();
@@ -199,7 +204,7 @@ impl System {
             VALUES ($1, $2, $3)
             "#,
             name,
-            event.user_id.0,
+            user_id.id,
             secret
         )
         .execute(&user_state.db)

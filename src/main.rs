@@ -7,24 +7,26 @@ mod events;
 mod interactions;
 mod models;
 mod oauth;
+mod util;
 
 use crate::models::Trusted;
 use std::str::FromStr;
 use std::sync::LazyLock;
 use std::{process::ExitCode, sync::Arc};
 
+use axum::{extract::MatchedPath, http::Request};
 use commands::process_command_event;
-use error_stack::{report, ResultExt};
+use error_stack::{ResultExt, report};
 use events::process_push_event;
 use interactions::process_interaction_event;
 use models::{system, user};
 use oauth::oauth_handler;
 use slack_morphism::prelude::*;
-use sqlx::sqlite::SqliteConnectOptions;
-use sqlx::SqlitePool;
-use tracing::debug;
-use tracing::{info, level_filters::LevelFilter};
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
+use sqlx::{SqlitePool, sqlite::SqliteConnectOptions};
+use tower_http::trace::TraceLayer;
+use tracing::info_span;
+use tracing::{debug, info, level_filters::LevelFilter};
+use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
 
 /// The slack app token. Used for socket mode if we ever decide to use it.
 pub static APP_TOKEN: LazyLock<SlackApiToken> =
@@ -150,6 +152,22 @@ async fn main() -> error_stack::Result<ExitCode, Error> {
                     .events_layer(&signing_secret)
                     .with_event_extractor(SlackEventsExtractors::interaction_event()),
             ),
+        )
+        .layer(
+            TraceLayer::new_for_http().make_span_with(|request: &Request<_>| {
+                // Log the matched route's path (with placeholders not filled in).
+                // Use request.uri() or OriginalUri if you want the real path.
+                let matched_path = request
+                    .extensions()
+                    .get::<MatchedPath>()
+                    .map(MatchedPath::as_str);
+
+                info_span!(
+                    "slack_system_bot::http_request",
+                    method = ?request.method(),
+                    matched_path,
+                )
+            }),
         );
 
     info!("Slack bot is running");

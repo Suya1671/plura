@@ -14,22 +14,8 @@ id!(
     => Message
 );
 
-impl Id<Trusted> {
-    pub async fn delete(self, db_pool: &SqlitePool) -> Result<(), sqlx::Error> {
-        sqlx::query!(
-            r#"
-                DELETE FROM message_logs
-                WHERE id = $1
-            "#,
-            self.id
-        )
-        .execute(db_pool)
-        .await
-        .map(|_| ())
-    }
-}
-
 #[derive(FromRow, Debug)]
+#[allow(dead_code)]
 pub struct MessageLog {
     pub id: Id<Trusted>,
     pub member_id: member::Id<Trusted>,

@@ -1,10 +1,12 @@
+use std::fmt::Debug;
+
 pub mod member;
 pub mod message;
 pub mod system;
 pub mod trigger;
 pub mod user;
 
-pub trait Trustability: Send + Sync {}
+pub trait Trustability: Send + Sync + Debug {}
 
 /// A trusted/valid ID
 #[derive(Debug, Clone, Copy)]

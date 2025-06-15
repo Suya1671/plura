@@ -5,7 +5,7 @@ use slack_morphism::prelude::*;
 use tracing::debug;
 
 use crate::{
-    BOT_TOKEN,
+    BOT_TOKEN, fields,
     models::{
         member::{self, Member},
         system::System,
@@ -46,6 +46,7 @@ pub enum CommandError {
 }
 
 impl Triggers {
+    #[tracing::instrument(skip_all)]
     pub async fn run(
         self,
         event: SlackCommandEvent,
@@ -68,6 +69,7 @@ impl Triggers {
         }
     }
 
+    #[tracing::instrument(skip(event, state, session), fields(system_id, member_id))]
     async fn create_trigger(
         event: SlackCommandEvent,
         state: &SlackClientEventsUserState,
@@ -84,6 +86,7 @@ impl Triggers {
                 .change_context(CommandError::Sqlx)?
                 .map(|system| system.id)
         else {
+            debug!("User does not have a system");
             return Ok(SlackCommandEventResponse::new(
                 SlackMessageContent::new().with_text(
                     "You don't have a system yet! Make one with `/system create <name>`".into(),
@@ -91,18 +94,23 @@ impl Triggers {
             ));
         };
 
+        fields!(system_id = %system_id);
+
         let Some(member_id) = Member::fetch_by_and_trust_id(system_id, member_id, &user_state.db)
             .await
             .change_context(CommandError::Sqlx)?
             .map(|member| member.id)
         else {
+            debug!("Member not found");
             return Ok(SlackCommandEventResponse::new(
                 SlackMessageContent::new()
                     .with_text("Member not found. Make sure you used the correct ID".into()),
             ));
         };
 
-        let view = trigger::View::new(String::new(), true).create_add_view(member_id);
+        fields!(member_id = %member_id);
+
+        let view = trigger::View::default().create_add_view(member_id);
         let view = session
             .views_open(&SlackApiViewsOpenRequest::new(
                 event.trigger_id.clone(),
@@ -112,11 +120,12 @@ impl Triggers {
             .attach_printable("Error opening view")
             .change_context(CommandError::Slack)?;
 
-        debug!("Opened view: {:#?}", view);
+        debug!(?view, "Opened view");
 
         Ok(SlackCommandEventResponse::new(SlackMessageContent::new()))
     }
 
+    #[tracing::instrument(skip(event, state), fields(system_id))]
     pub async fn delete_trigger(
         event: SlackCommandEvent,
         state: &SlackClientEventsUserState,
@@ -139,11 +148,14 @@ impl Triggers {
             ));
         };
 
+        fields!(system_id = %system_id);
+
         // Validate the trigger belongs to the user's system
         let Ok(trigger_id) = trigger_id
             .validate_by_system(system_id, &user_state.db)
             .await
         else {
+            debug!("Trigger not found");
             return Ok(SlackCommandEventResponse::new(
                 SlackMessageContent::new()
                     .with_text("Trigger not found. Make sure you used the correct ID".into()),
@@ -161,6 +173,7 @@ impl Triggers {
         ))
     }
 
+    #[tracing::instrument(skip(event, state), fields(system_id))]
     pub async fn list_triggers(
         event: SlackCommandEvent,
         state: &SlackClientEventsUserState,
@@ -175,12 +188,15 @@ impl Triggers {
                 .change_context(CommandError::Sqlx)?
                 .map(|system| system.id)
         else {
+            debug!("User doesn't have a system");
             return Ok(SlackCommandEventResponse::new(
                 SlackMessageContent::new().with_text(
                     "You don't have a system yet! Make one with `/system create <name>`".into(),
                 ),
             ));
         };
+
+        fields!(system_id = %system_id);
 
         let triggers = if let Some(member_id) = member_id {
             let member_id = member::Id::new(member_id);
@@ -190,11 +206,14 @@ impl Triggers {
                 .validate_by_system(system_id, &user_state.db)
                 .await
             else {
+                debug!("Member not found");
                 return Ok(SlackCommandEventResponse::new(
                     SlackMessageContent::new()
                         .with_text("Member not found. Make sure you used the correct ID".into()),
                 ));
             };
+
+            fields!(member_id = %member_id);
 
             member_id
                 .fetch_triggers(&user_state.db)
@@ -208,10 +227,13 @@ impl Triggers {
         };
 
         if triggers.is_empty() {
+            debug!("No triggers found");
             return Ok(SlackCommandEventResponse::new(
                 SlackMessageContent::new().with_text("No triggers found.".into()),
             ));
         }
+
+        debug!(len = triggers.len(), "Found triggers");
 
         let trigger_blocks = triggers
             .into_iter()
@@ -219,15 +241,7 @@ impl Triggers {
                 let fields = vec![
                     md!("Trigger ID: {}", trigger.id),
                     md!("Member ID: {}", trigger.member_id),
-                    md!(
-                        "{}: {}",
-                        if trigger.is_prefix {
-                            "Prefix"
-                        } else {
-                            "Suffix"
-                        },
-                        trigger.text
-                    ),
+                    md!("{}: {}", trigger.typ, trigger.text),
                 ];
 
                 SlackSectionBlock::new()
@@ -242,6 +256,7 @@ impl Triggers {
         ))
     }
 
+    #[tracing::instrument(skip(event, state, session), fields(system_id))]
     pub async fn edit_trigger(
         event: SlackCommandEvent,
         state: &SlackClientEventsUserState,
@@ -258,12 +273,15 @@ impl Triggers {
                 .change_context(CommandError::Sqlx)?
                 .map(|system| system.id)
         else {
+            debug!("User does not have a system");
             return Ok(SlackCommandEventResponse::new(
                 SlackMessageContent::new().with_text(
                     "You don't have a system yet! Make one with `/system create <name>`".into(),
                 ),
             ));
         };
+
+        fields!(system_id = %system_id);
 
         // Validate the trigger belongs to the user's system
         let Ok(trigger_id) = trigger_id
@@ -276,12 +294,15 @@ impl Triggers {
             ));
         };
 
+        fields!(trigger_id = %trigger_id);
+
         // Fetch the trigger to edit
         let trigger = trigger::Trigger::fetch_by_id(trigger_id, &user_state.db)
             .await
             .change_context(CommandError::Sqlx)?;
 
         let Some(trigger) = trigger else {
+            debug!("Trigger not found");
             return Ok(SlackCommandEventResponse::new(
                 SlackMessageContent::new()
                     .with_text("Trigger not found. Make sure you used the correct ID".into()),
@@ -299,7 +320,7 @@ impl Triggers {
             .attach_printable("Error opening view")
             .change_context(CommandError::Slack)?;
 
-        debug!("Opened view: {:#?}", view);
+        debug!(?view, "Opened view");
 
         Ok(SlackCommandEventResponse::new(SlackMessageContent::new()))
     }

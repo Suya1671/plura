@@ -1,8 +1,9 @@
 use error_stack::{Result, ResultExt, bail};
 use slack_morphism::prelude::*;
+use tracing::debug;
 
 use crate::{
-    BOT_TOKEN,
+    BOT_TOKEN, fields,
     models::{
         Trusted, member,
         system::System,
@@ -21,6 +22,7 @@ pub enum Error {
     NoSystem,
 }
 
+#[tracing::instrument(skip(view_state, client, user_state), fields(system_id))]
 pub async fn create_trigger(
     view_state: SlackViewState,
     client: &SlackHyperClient,
@@ -39,10 +41,15 @@ pub async fn create_trigger(
         bail!(Error::NoSystem);
     };
 
-    let _id = data
+    fields!(system_id = %system_id);
+
+    let id = data
         .add(system_id, member_id, &user_state.db)
         .await
         .change_context(Error::Sqlx)?;
+
+    fields!(id = %id);
+    debug!("Trigger created");
 
     let session = client.open_session(&BOT_TOKEN);
     let user: SlackUserId = user_id.into();
@@ -65,6 +72,7 @@ pub async fn create_trigger(
     Ok(())
 }
 
+#[tracing::instrument(skip(view_state, client, user_state))]
 pub async fn edit_trigger(
     view_state: SlackViewState,
     client: &SlackHyperClient,

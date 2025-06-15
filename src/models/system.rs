@@ -25,6 +25,18 @@ impl Id<Trusted> {
     pub async fn list_triggers(self, db: &SqlitePool) -> Result<Vec<Trigger>, sqlx::Error> {
         Trigger::fetch_by_system_id(db, self).await
     }
+
+    pub async fn rename(self, new_name: &str, db: &SqlitePool) -> Result<(), sqlx::Error> {
+        sqlx::query!(
+            "UPDATE systems SET name = ? WHERE id = ?",
+            new_name,
+            self.id
+        )
+        .execute(db)
+        .await?;
+
+        Ok(())
+    }
 }
 
 #[derive(Debug, FromRow, PartialEq, Eq, Clone)]
@@ -44,6 +56,7 @@ impl From<String> for SlackOauthToken {
 }
 
 #[derive(FromRow, Debug)]
+#[allow(dead_code)]
 pub struct System {
     #[sqlx(flatten)]
     pub id: Id<Trusted>,
@@ -65,6 +78,7 @@ pub enum ChangeActiveMemberError {
 }
 
 impl System {
+    #[tracing::instrument(skip(db))]
     pub async fn fetch_by_user_id<T>(
         db: &SqlitePool,
         user_id: &user::Id<T>,
@@ -175,14 +189,15 @@ impl System {
                     display_name,
                     profile_picture_url,
                     triggers.text as trigger_text,
-                    triggers.is_prefix
+                    triggers.typ
                 FROM
                     members
                 JOIN
                     triggers ON members.id = triggers.member_id
                 WHERE
-                    (triggers.is_prefix = TRUE AND ?1 LIKE triggers.text || '%') OR
-                    (triggers.is_prefix = FALSE AND ?1 LIKE '%' || triggers.text)
+                    -- See trigger.rs file for all types and names
+                    (triggers.typ = 0 AND ?1 LIKE triggers.text || '%') OR
+                    (triggers.typ = 1 AND ?1 LIKE '%' || triggers.text)
             "#,
             message
         )

@@ -79,6 +79,7 @@ where
     }
 }
 
+#[tracing::instrument(skip_all, ret)]
 pub async fn oauth_handler(
     Query(code): Query<OauthCode>,
     State(state): State<user::State>,

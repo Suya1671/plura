@@ -1,3 +1,5 @@
+use std::str::FromStr;
+
 use crate::id;
 
 use super::{Trustability, Trusted, Untrusted, member, system};
@@ -69,13 +71,51 @@ pub enum Error {
     Sqlx,
 }
 
+#[derive(Debug, sqlx::Type, displaydoc::Display, PartialEq, Eq)]
+#[repr(i64)]
+pub enum Type {
+    /// Suffix
+    Suffix = 0,
+    /// Prefix
+    Prefix = 1,
+}
+
+impl From<i64> for Type {
+    fn from(value: i64) -> Self {
+        match value {
+            0 => Self::Suffix,
+            1 => Self::Prefix,
+            _ => unreachable!(
+                "Invalid type value. This means the database and rust struct are out of sync"
+            ),
+        }
+    }
+}
+
+#[derive(Debug, displaydoc::Display)]
+/// Unknown type
+pub struct UnknownType(String);
+
+impl FromStr for Type {
+    type Err = UnknownType;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "suffix" => Ok(Self::Suffix),
+            "prefix" => Ok(Self::Prefix),
+            _ => Err(UnknownType(s.to_string())),
+        }
+    }
+}
+
 #[derive(FromRow, Debug)]
+#[allow(dead_code)]
 pub struct Trigger {
     pub id: Id<Trusted>,
     pub member_id: member::Id<Trusted>,
     pub system_id: system::Id<Trusted>,
     pub text: String,
-    pub is_prefix: bool,
+    pub typ: Type,
 }
 
 impl Trigger {
@@ -91,7 +131,7 @@ impl Trigger {
                 member_id as "member_id: member::Id<Trusted>",
                 system_id as "system_id: system::Id<Trusted>",
                 text,
-                is_prefix
+                typ
             FROM
                 triggers
             WHERE id = $1
@@ -114,7 +154,7 @@ impl Trigger {
                     member_id as "member_id: member::Id<Trusted>",
                     system_id as "system_id: system::Id<Trusted>",
                     text,
-                    is_prefix
+                    typ
                 FROM
                     triggers
                 WHERE
@@ -138,7 +178,7 @@ impl Trigger {
                 member_id as "member_id: member::Id<Trusted>",
                 system_id as "system_id: system::Id<Trusted>",
                 text,
-                is_prefix
+                typ
             FROM
                 triggers
             WHERE member_id = $1
@@ -154,24 +194,28 @@ impl Trigger {
 #[derive(Debug)]
 pub struct View {
     pub text: String,
-    pub is_prefix: bool,
+    pub typ: Type,
 }
 
 impl Default for View {
     fn default() -> Self {
         Self {
             text: String::new(),
-            is_prefix: true,
+            typ: Type::Prefix,
         }
     }
 }
 
 impl View {
     pub fn create_blocks(self) -> Vec<SlackBlock> {
-        let prefix_choice =
-            SlackBlockChoiceItem::new(SlackBlockText::Plain("prefix".into()), "prefix".into());
-        let suffix_choice =
-            SlackBlockChoiceItem::new(SlackBlockText::Plain("suffix".into()), "suffix".into());
+        let prefix_choice = SlackBlockChoiceItem::new(
+            SlackBlockText::Plain(Type::Prefix.to_string().into()),
+            Type::Prefix.to_string(),
+        );
+        let suffix_choice = SlackBlockChoiceItem::new(
+            SlackBlockText::Plain(Type::Suffix.to_string().into()),
+            Type::Suffix.to_string(),
+        );
 
         slack_blocks!(
             some_into(
@@ -191,14 +235,13 @@ impl View {
                 SlackInputBlock::new(
                     "Trigger Type".into(),
                     SlackBlockRadioButtonsElement::new(
-                        "is_prefix".into(),
-                        vec![prefix_choice.clone(), suffix_choice.clone()]
+                        "type".into(),
+                        vec![prefix_choice, suffix_choice]
                     )
-                    .with_initial_option(if self.is_prefix {
-                        prefix_choice
-                    } else {
-                        suffix_choice
-                    })
+                    .with_initial_option(SlackBlockChoiceItem::new(
+                        SlackBlockText::Plain(Type::Prefix.to_string().into()),
+                        Type::Prefix.to_string(),
+                    ))
                     .into(),
                 )
                 .with_optional(false)
@@ -222,14 +265,14 @@ impl View {
 
         sqlx::query!(
             r#"
-            INSERT INTO triggers (system_id, member_id, text, is_prefix)
+            INSERT INTO triggers (system_id, member_id, text, typ)
             VALUES ($1, $2, $3, $4)
             RETURNING id
             "#,
             system_id.id,
             member_id.id,
             self.text,
-            self.is_prefix
+            self.typ
         )
         .fetch_one(db_pool)
         .await
@@ -250,11 +293,11 @@ impl View {
         sqlx::query!(
             r#"
             UPDATE triggers
-            SET text = $1, is_prefix = $2
+            SET text = $1, typ = $2
             WHERE id = $3
             "#,
             self.text,
-            self.is_prefix,
+            self.typ,
             trigger_id.id,
         )
         .execute(db)
@@ -262,13 +305,6 @@ impl View {
         .attach_printable("Error updating trigger in database")
         .change_context(Error::Sqlx)
         .map(|_| ())
-    }
-
-    pub const fn new(trigger_text: String, is_prefix: bool) -> Self {
-        Self {
-            text: trigger_text,
-            is_prefix,
-        }
     }
 
     pub fn create_add_view(self, member_id: member::Id<Trusted>) -> SlackView {
@@ -299,9 +335,12 @@ impl From<SlackViewState> for View {
                             view.text = text;
                         }
                     }
-                    "is_prefix" => {
+                    "typ" => {
                         if let Some(option) = content.selected_option {
-                            view.is_prefix = option.value == "prefix";
+                            match option.value.parse::<Type>() {
+                                Ok(typ) => view.typ = typ,
+                                Err(error) => warn!(?error, "Error parsing trigger type"),
+                            }
                         }
                     }
                     other => {
@@ -319,7 +358,7 @@ impl From<Trigger> for View {
     fn from(trigger: Trigger) -> Self {
         Self {
             text: trigger.text,
-            is_prefix: trigger.is_prefix,
+            typ: trigger.typ,
         }
     }
 }

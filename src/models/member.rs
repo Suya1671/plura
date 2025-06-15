@@ -7,7 +7,7 @@ use crate::id;
 
 use super::{
     Trusted, Untrusted, system,
-    trigger::{self, Trigger},
+    trigger::{self, Trigger, Type},
     user,
 };
 
@@ -100,8 +100,9 @@ impl Id<Trusted> {
     }
 }
 
-// TODO: move sql to rust struct
+// TO-DO: move SQL to rust struct
 #[derive(FromRow, Debug)]
+#[allow(dead_code)]
 pub struct Member {
     /// The ID of the member
     pub id: Id<Trusted>,
@@ -143,7 +144,7 @@ impl Member {
             WHERE system_id = $1 AND id = $2
             "#,
             system_id,
-            // safe because this query also checks if the ID is trusted
+            // Safe because this query also checks if the ID is trusted
             member_id.id
         )
         .fetch_optional(db)
@@ -179,7 +180,7 @@ impl Member {
     }
 }
 
-/// all information required to display a member
+/// All information required to display a member
 #[derive(FromRow, Debug)]
 pub struct TriggeredMember {
     /// The ID of the member
@@ -190,8 +191,8 @@ pub struct TriggeredMember {
     pub profile_picture_url: Option<String>,
     /// The trigger text that was matched
     pub trigger_text: String,
-    /// Whether this was a prefix trigger (true) or suffix trigger (false)
-    pub is_prefix: bool,
+    /// The type of trigger
+    pub typ: Type,
 }
 
 impl From<Member> for TriggeredMember {
@@ -201,7 +202,7 @@ impl From<Member> for TriggeredMember {
             display_name: value.display_name,
             profile_picture_url: value.profile_picture_url,
             trigger_text: String::new(),
-            is_prefix: true,
+            typ: Type::Prefix,
         }
     }
 }

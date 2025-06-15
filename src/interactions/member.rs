@@ -1,14 +1,14 @@
-use error_stack::{bail, Result, ResultExt};
+use error_stack::{Result, ResultExt, bail};
 use slack_morphism::prelude::*;
+use tracing::trace;
 
 use crate::{
+    BOT_TOKEN, fields,
     models::{
-        member,
+        Trusted, member,
         system::System,
         user::{self, State},
-        Trusted,
     },
-    BOT_TOKEN,
 };
 
 #[derive(thiserror::Error, displaydoc::Display, Debug)]
@@ -23,12 +23,14 @@ pub enum Error {
     NoSystem,
 }
 
+#[tracing::instrument(skip(view_state, client, user_state), fields(system_id))]
 pub async fn create_member(
     view_state: SlackViewState,
     client: &SlackHyperClient,
     user_state: &State,
     user_id: user::Id<Trusted>,
 ) -> Result<(), Error> {
+    trace!("Creating member");
     let data = member::View::try_from(view_state).change_context(Error::ParsingView)?;
 
     let Some(system_id) = System::fetch_by_user_id(&user_state.db, &user_id)
@@ -39,6 +41,8 @@ pub async fn create_member(
     else {
         bail!(Error::NoSystem);
     };
+
+    fields!(system_id = %system_id);
 
     let id = data
         .add(system_id, &user_state.db)
@@ -69,6 +73,7 @@ pub async fn create_member(
     Ok(())
 }
 
+#[tracing::instrument(skip(view_state, client, user_state))]
 pub async fn edit_member(
     view_state: SlackViewState,
     client: &SlackHyperClient,
@@ -76,6 +81,7 @@ pub async fn edit_member(
     user_id: user::Id<Trusted>,
     member_id: member::Id<Trusted>,
 ) -> Result<(), Error> {
+    trace!("Editing member");
     let data = member::View::try_from(view_state).change_context(Error::ParsingView)?;
 
     data.update(member_id, &user_state.db)

@@ -9,6 +9,7 @@ use slack_morphism::prelude::*;
 use tracing::{debug, error};
 use trigger::{create_trigger, edit_trigger};
 
+use crate::fields;
 use crate::models::system::System;
 use crate::models::{self, Trusted, user};
 
@@ -20,11 +21,12 @@ pub async fn process_interaction_event(
     let client = environment.client.clone();
     let states = environment.user_state.clone();
 
-    if let Err(err) = interaction_event(client, event, states).await {
-        error!("Error processing interaction event: {:#?}", err);
+    if let Err(error) = interaction_event(client, event, states).await {
+        error!(?error, "Error processing interaction event");
     }
 }
 
+#[tracing::instrument(skip(client, event, states))]
 async fn interaction_event(
     client: Arc<SlackHyperClient>,
     event: SlackInteractionEvent,
@@ -34,16 +36,18 @@ async fn interaction_event(
         SlackInteractionEvent::ViewSubmission(slack_interaction_view_submission_event) => {
             match slack_interaction_view_submission_event.view.view {
                 SlackView::Home(view) => {
-                    debug!("Received home view: {:#?}", view);
+                    debug!(?view, "Received home view");
                     Ok(())
                 }
                 SlackView::Modal(ref view) => {
-                    debug!("Received modal view: {:#?}", view);
+                    debug!(?view, "Received modal view");
 
                     let user_id: user::Id<Trusted> =
                         slack_interaction_view_submission_event.user.id.into();
                     let states = states.read().await;
                     let user_state = states.get_user_state::<user::State>().unwrap();
+
+                    fields!(user_id = %&user_id);
 
                     let Some(view_state) = slack_interaction_view_submission_event
                         .view
@@ -104,8 +108,8 @@ async fn handle_modal_view(
                 .map(models::member::Id::new)
             else {
                 error!(
-                    "Failed to parse member id from external id {}. Bailing in case this was a malicious call",
-                    id
+                    id,
+                    "Failed to parse member id from external id. Bailing in case this was a malicious call",
                 );
                 return Ok(());
             };
@@ -113,8 +117,8 @@ async fn handle_modal_view(
             let Ok(trusted_member_id) = member_id.validate_by_user(&user_id, &user_state.db).await
             else {
                 error!(
-                    "Failed to validate member id from external id {}. Bailing in case this was a malicious call",
-                    id
+                    id,
+                    "Failed to validate member id from external id. Bailing in case this was a malicious call",
                 );
                 return Ok(());
             };
@@ -136,8 +140,8 @@ async fn handle_modal_view(
             let Ok(trusted_member_id) = member_id.validate_by_user(&user_id, &user_state.db).await
             else {
                 error!(
-                    "Failed to validate member id from external id {}. Bailing in case this was a malicious call",
-                    id
+                    id,
+                    "Failed to validate member id from external id. Bailing in case this was a malicious call",
                 );
                 return Ok(());
             };
@@ -161,8 +165,8 @@ async fn handle_modal_view(
                 .flatten()
             else {
                 error!(
-                    "Failed to fetch system id for user id {}. Bailing in case this was a malicious call",
-                    user_id
+                    %user_id,
+                    "Failed to fetch system id for user id. Bailing in case this was a malicious call"
                 );
                 return Ok(());
             };

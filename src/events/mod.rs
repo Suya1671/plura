@@ -1,21 +1,48 @@
 use std::{convert::Infallible, sync::Arc};
 
 use axum::{Extension, body::Bytes, http::Response};
-use error_stack::ResultExt;
+use error_stack::{Result, ResultExt};
 use http_body_util::{BodyExt, Empty, Full, combinators::BoxBody};
 use slack_morphism::prelude::*;
 use sqlx::SqlitePool;
 use tracing::{debug, error, trace};
 
 use crate::{
-    BOT_TOKEN,
+    BOT_TOKEN, fields,
     models::{
         member::{Member, TriggeredMember},
         message::MessageLog,
         system::System,
+        trigger::Type,
         user,
     },
 };
+
+#[derive(thiserror::Error, displaydoc::Display, Debug)]
+pub enum RewriteMessageError {
+    /// Error while posting a message to Slack
+    PostMessage,
+    /// Error while deleting a message from Slack
+    DeleteMessage,
+    /// Error while serializing custom image blocks
+    SerializeImageBlocks,
+    /// Error while saving message log to database
+    MessageLog,
+}
+
+#[derive(thiserror::Error, displaydoc::Display, Debug)]
+pub enum PushEventError {
+    /// Error while interacting with the Slack API
+    SlackApi,
+    /// Error while fetching system information from database
+    SystemFetch,
+    /// Error while fetching member information from database
+    MemberFetch,
+    /// Error while attempting to change the active member
+    MemberChange,
+    /// Error while attempting to rewrite the message
+    MessageRewrite,
+}
 
 #[tracing::instrument(skip(environment, event))]
 pub async fn process_push_event(
@@ -44,11 +71,12 @@ pub async fn process_push_event(
     }
 }
 
+#[tracing::instrument(skip(event, state, client))]
 async fn push_event_callback(
     event: SlackPushEventCallback,
     client: Arc<SlackHyperClient>,
     state: SlackClientEventsUserState,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<(), PushEventError> {
     match event.event {
         SlackEventCallbackBody::Message(message_event)
             if message_event
@@ -56,14 +84,14 @@ async fn push_event_callback(
                 .as_ref()
                 .is_some_and(|subtype| *subtype == SlackMessageEventType::MessageDeleted) =>
         {
+            fields!(event_type = ?SlackMessageEventType::MessageDeleted);
             let states = state.read().await;
             let user_state = states.get_user_state::<user::State>().unwrap();
 
             MessageLog::delete_by_message_id(message_event.deleted_ts.unwrap().0, &user_state.db)
                 .await
-                .attach_printable("Failed to delete message log")?;
-
-            Ok(())
+                .change_context(PushEventError::SlackApi)
+                .attach_printable("Failed to delete message log")
         }
         SlackEventCallbackBody::Message(message_event)
             if message_event.subtype.is_none()
@@ -72,83 +100,117 @@ async fn push_event_callback(
                     .as_ref()
                     .is_some_and(|subtype| *subtype == SlackMessageEventType::MessageChanged) =>
         {
-            debug!("Received message event!");
-            trace!("Message: {:?}", message_event);
-
-            let states = state.read().await;
-            let user_state = states.get_user_state::<user::State>().unwrap();
-
-            let Some(user_id) = message_event.sender.user.map(user::Id::new) else {
-                return Ok(());
-            };
-
-            let Some(mut system) = System::fetch_by_user_id(&user_state.db, &user_id).await? else {
-                return Ok(());
-            };
-
-            let Some(ref channel_id) = message_event.origin.channel else {
-                return Ok(());
-            };
-
-            let Some(content) = message_event.content else {
-                return Ok(());
-            };
-
-            if let Some(ref message_content) = content.text {
-                let Some(member) = system
-                    .fetch_triggered_member(&user_state.db, message_content)
-                    .await?
-                else {
-                    return Ok(());
-                };
-
-                debug!("Triggered member: {:#?}", member);
-
-                if system.trigger_changes_active_member {
-                    system
-                        .change_active_member(Some(member.id), &user_state.db)
-                        .await?;
-                }
-
-                rewrite_message(
-                    &client,
-                    channel_id,
-                    message_event.origin.ts,
-                    content,
-                    member,
-                    &system,
-                    &user_state.db,
-                )
-                .await?;
-
-                return Ok(());
-            }
-
-            // No triggers ran, so check if there's any actively fronting member
-            if let Some(member_id) = system.active_member_id {
-                let Some(member) = Member::fetch_by_id(member_id, &user_state.db).await? else {
-                    error!("Active member not found. This should not happen.");
-                    return Ok(());
-                };
-
-                rewrite_message(
-                    &client,
-                    channel_id,
-                    message_event.origin.ts,
-                    content,
-                    member.into(),
-                    &system,
-                    &user_state.db,
-                )
-                .await?;
-            }
-
-            Ok(())
+            handle_message(message_event, &client, &state).await
         }
         _ => Ok(()),
     }
 }
 
+#[tracing::instrument(skip_all)]
+async fn handle_message(
+    message_event: SlackMessageEvent,
+    client: &SlackHyperClient,
+    state: &SlackClientEventsUserState,
+) -> error_stack::Result<(), PushEventError> {
+    fields!(event_type = ?message_event.subtype);
+    debug!("Received message event!");
+
+    let states = state.read().await;
+    let user_state = states.get_user_state::<user::State>().unwrap();
+
+    let Some(user_id) = message_event.sender.user.map(user::Id::new) else {
+        debug!("Failed to get user ID");
+        return Ok(());
+    };
+
+    fields!(user_id = ?&user_id);
+
+    let Some(mut system) = System::fetch_by_user_id(&user_state.db, &user_id)
+        .await
+        .change_context(PushEventError::SystemFetch)?
+    else {
+        debug!("Failed to fetch system");
+        return Ok(());
+    };
+
+    fields!(system_id = %&system.id);
+
+    let Some(ref channel_id) = message_event.origin.channel else {
+        debug!("Failed to get channel ID");
+        return Ok(());
+    };
+
+    fields!(channel_id = %&channel_id);
+
+    let Some(content) = message_event.content else {
+        debug!("Failed to get message content");
+        return Ok(());
+    };
+
+    if let Some(ref message_content) = content.text {
+        let Some(member) = system
+            .fetch_triggered_member(&user_state.db, message_content)
+            .await
+            .change_context(PushEventError::MemberFetch)?
+        else {
+            return Ok(());
+        };
+
+        fields!(member = ?&member);
+        debug!("Member triggered");
+
+        if system.trigger_changes_active_member {
+            system
+                .change_active_member(Some(member.id), &user_state.db)
+                .await
+                .change_context(PushEventError::MemberChange)?;
+        }
+
+        rewrite_message(
+            client,
+            channel_id,
+            message_event.origin.ts,
+            content,
+            member,
+            &system,
+            &user_state.db,
+        )
+        .await
+        .change_context(PushEventError::MessageRewrite)?;
+        return Ok(());
+    }
+
+    debug!("Member not triggered");
+
+    // No triggers ran, so check if there's any actively fronting member
+    if let Some(member_id) = system.active_member_id {
+        fields!(member = %&member_id);
+        let Some(member) = Member::fetch_by_id(member_id, &user_state.db)
+            .await
+            .change_context(PushEventError::MemberFetch)?
+        else {
+            error!("Active member not found. This should not happen.");
+            return Ok(());
+        };
+        fields!(member = ?&member);
+
+        rewrite_message(
+            client,
+            channel_id,
+            message_event.origin.ts,
+            content,
+            member.into(),
+            &system,
+            &user_state.db,
+        )
+        .await
+        .change_context(PushEventError::MemberFetch)?;
+    }
+
+    Ok(())
+}
+
+#[tracing::instrument(skip(client, db, system), fields(system_id = %system.id))]
 async fn rewrite_message(
     client: &SlackHyperClient,
     channel_id: &SlackChannelId,
@@ -157,8 +219,7 @@ async fn rewrite_message(
     member: TriggeredMember,
     system: &System,
     db: &SqlitePool,
-    // TODO: better error handling/custom error enum
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+) -> error_stack::Result<(), RewriteMessageError> {
     let token = SlackApiToken::new(system.slack_oauth_token.expose().into())
         .with_token_type(SlackApiTokenType::User);
     let user_session = client.open_session(&token);
@@ -227,7 +288,8 @@ async fn rewrite_message(
     let custom_image_blocks = custom_image_blocks
         .into_iter()
         .map(serde_json::to_value)
-        .collect::<Result<Vec<serde_json::Value>, serde_json::Error>>()?;
+        .collect::<std::result::Result<Vec<serde_json::Value>, serde_json::Error>>()
+        .change_context(RewriteMessageError::SerializeImageBlocks)?;
 
     blocks.extend(custom_image_blocks);
 
@@ -239,18 +301,18 @@ async fn rewrite_message(
             Some(&CHAT_POST_MESSAGE_SPECIAL_LIMIT_RATE_CTL),
         )
         .await
-        .attach_printable("Error rewriting message")?;
+        .change_context(RewriteMessageError::PostMessage)?;
 
     MessageLog::insert(member.id, res.ts, db)
         .await
-        .attach_printable("Could not insert message log")?;
+        .change_context(RewriteMessageError::MessageLog)?;
 
     user_session
         .chat_delete(
             &SlackApiChatDeleteRequest::new(channel_id.clone(), message_id).with_as_user(true),
         )
         .await
-        .attach_printable("Error deleting message")?;
+        .change_context(RewriteMessageError::DeleteMessage)?;
 
     Ok(())
 }
@@ -259,12 +321,17 @@ fn rewrite_content(content: &mut SlackMessageContent, member: &TriggeredMember) 
     debug!("Rewriting message content");
 
     if let Some(text) = &mut content.text {
-        if member.is_prefix {
-            if let Some(new_text) = text.strip_prefix(&member.trigger_text) {
-                *text = new_text.to_string();
+        match member.typ {
+            Type::Prefix => {
+                if let Some(new_text) = text.strip_prefix(&member.trigger_text) {
+                    *text = new_text.to_string();
+                }
             }
-        } else if let Some(new_text) = text.strip_suffix(&member.trigger_text) {
-            *text = new_text.to_string();
+            Type::Suffix => {
+                if let Some(new_text) = text.strip_suffix(&member.trigger_text) {
+                    *text = new_text.to_string();
+                }
+            }
         }
     }
 
@@ -273,11 +340,11 @@ fn rewrite_content(content: &mut SlackMessageContent, member: &TriggeredMember) 
             if let SlackBlock::RichText(richtext) = block {
                 let elements = richtext["elements"].as_array_mut().unwrap();
                 let len = elements.len();
-                // the first and last elements would have the prefix and suffix respectively, so we can filter them
+                // The first and last elements would have the prefix and suffix respectively, so we can filter them
                 let first = elements.get_mut(0).unwrap();
 
                 if let Some(first_text) = first.pointer_mut("/elements/0/text") {
-                    if member.is_prefix {
+                    if member.typ == Type::Prefix {
                         if let Some(new_text) = first_text
                             .as_str()
                             .and_then(|text| text.strip_prefix(&member.trigger_text))
@@ -291,7 +358,7 @@ fn rewrite_content(content: &mut SlackMessageContent, member: &TriggeredMember) 
                 let last = elements.get_mut(len - 1).unwrap();
 
                 if let Some(last_text) = last.pointer_mut("/elements/0/text") {
-                    if !member.is_prefix {
+                    if member.typ == Type::Suffix {
                         if let Some(new_text) = last_text
                             .as_str()
                             .and_then(|text| text.strip_suffix(&member.trigger_text))

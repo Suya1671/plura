@@ -4,14 +4,16 @@ mod members;
 mod system;
 mod triggers;
 use axum::{Extension, Json};
-use clap::Parser;
+use clap::{Parser, error::ErrorKind};
 use error_stack::ResultExt;
 use members::Members;
 
 use slack_morphism::prelude::*;
 use system::System;
-use tracing::{debug, error};
+use tracing::{Level, debug, error, trace};
 use triggers::Triggers;
+
+use crate::fields;
 
 #[derive(clap::Parser, Debug)]
 #[command(color(clap::ColorChoice::Never))]
@@ -25,6 +27,7 @@ enum Command {
 }
 
 impl Command {
+    #[tracing::instrument(level = Level::DEBUG, skip(event, client, state), fields(runner_user_id = %event.user_id, runner_channel_id = %event.channel_id, runner_channel_name = ?event.channel_name, trigger_id = %event.trigger_id))]
     pub async fn run(
         self,
         event: SlackCommandEvent,
@@ -35,29 +38,30 @@ impl Command {
             Self::Members(members) => members
                 .run(event, client, state)
                 .await
-                .attach_printable("Failed to run members command")
-                .change_context(CommandError::Command),
+                .change_context(CommandError::Members),
             Self::System(system) => system
                 .run(event, client, state)
                 .await
-                .attach_printable("Failed to run system command")
-                .change_context(CommandError::Command),
+                .change_context(CommandError::System),
             Self::Triggers(triggers) => triggers
                 .run(event, client, state)
                 .await
-                .attach_printable("Failed to run triggers command")
-                .change_context(CommandError::Command),
+                .change_context(CommandError::Triggers),
         }
     }
 }
 
 #[derive(thiserror::Error, displaydoc::Display, Debug)]
 enum CommandError {
-    /// Error running the command
-    Command,
+    /// Error running the members command
+    Members,
+    /// Error running the triggers command
+    Triggers,
+    /// Error running the system command
+    System,
 }
 
-// TODO: figure out error handling
+// TO-DO: figure out error handling
 #[tracing::instrument(skip(environment, event))]
 pub async fn process_command_event(
     Extension(environment): Extension<Arc<SlackHyperListenerEnvironment>>,
@@ -69,7 +73,7 @@ pub async fn process_command_event(
     match command_event_callback(event, client, state).await {
         Ok(response) => Json(response),
         Err(e) => {
-            error!("Error processing command event: {:#?}", e);
+            error!(error = ?e, "Error processing command event");
             Json(SlackCommandEventResponse::new(
                 SlackMessageContent::new()
                     .with_text("Error processing command! Logged to developers".into()),
@@ -78,12 +82,13 @@ pub async fn process_command_event(
     }
 }
 
+#[tracing::instrument(level = Level::TRACE, skip(client, state), fields(command))]
 async fn command_event_callback(
     event: SlackCommandEvent,
     client: Arc<SlackHyperClient>,
     state: SlackClientEventsUserState,
 ) -> Result<SlackCommandEventResponse, CommandError> {
-    debug!("Received command: {:?}", event.command);
+    trace!(command = ?event.command, "Received command");
 
     let formatted_command = event.command.0.trim_start_matches('/');
     let formatted = event.text.as_ref().map_or_else(
@@ -91,22 +96,21 @@ async fn command_event_callback(
         |text| format!("slack-system-bot {formatted_command} {text}"),
     );
 
-    debug!("Formatted command: {formatted}");
+    fields!(command = &formatted);
 
     let parser = Command::try_parse_from(formatted.split_whitespace());
 
     match parser {
         Ok(parser) => {
-            debug!("Parsed command: {:?}", parser);
+            debug!(?parser, "Parsed command. Running...");
             let result = parser.run(event, client, state).await;
             match result {
                 Ok(res) => {
-                    debug!("Command {} executed successfully", formatted);
+                    debug!("Command executed successfully");
                     Ok(res)
                 }
                 Err(e) => {
-                    error!("Error running command {formatted}");
-                    error!("{e:?}");
+                    error!(error = ?e, "Error running command");
                     Ok(SlackCommandEventResponse::new(
                         SlackMessageContent::new().with_text(
                             "Error running command! TODO: show error info on slack".into(),
@@ -116,6 +120,15 @@ async fn command_event_callback(
             }
         }
         Err(error) => {
+            if !matches!(
+                error.kind(),
+                ErrorKind::DisplayHelp
+                    | ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand
+                    | ErrorKind::DisplayVersion
+            ) {
+                debug!(error = ?error, "Error parsing command. Most likely user's fault");
+            }
+
             let formatted = error.render();
             Ok(SlackCommandEventResponse::new(
                 SlackMessageContent::new().with_text(formatted.to_string()),

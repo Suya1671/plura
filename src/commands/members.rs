@@ -2,11 +2,12 @@ use std::sync::Arc;
 
 use error_stack::{Result, ResultExt, report};
 use slack_morphism::prelude::*;
-use tracing::{debug, info};
+use tracing::{debug, info, trace};
 
 use crate::{
     BOT_TOKEN,
     commands::members,
+    fields,
     models::{
         member::{self, Member, View},
         system::{ChangeActiveMemberError, System},
@@ -53,18 +54,20 @@ pub enum Members {
 #[derive(thiserror::Error, displaydoc::Display, Debug)]
 pub enum CommandError {
     /// Error while calling the Slack API
-    Slack,
+    SlackApi,
     /// Error while calling the database
     Sqlx,
 }
 
 impl Members {
+    #[tracing::instrument(skip_all)]
     pub async fn run(
         self,
         event: SlackCommandEvent,
         client: Arc<SlackHyperClient>,
         state: SlackClientEventsUserState,
     ) -> Result<SlackCommandEventResponse, CommandError> {
+        trace!("Running members command");
         match self {
             Self::Add => {
                 let token = &BOT_TOKEN;
@@ -72,7 +75,7 @@ impl Members {
                 Self::create_member(event, session).await
             }
             Self::Delete { member } => {
-                info!("Deleting member {member}");
+                debug!(member_id = member, "Delete member command not implemented");
                 Ok(SlackCommandEventResponse::new(
                     SlackMessageContent::new().with_text("Working on it".into()),
                 ))
@@ -88,12 +91,14 @@ impl Members {
         }
     }
 
+    #[tracing::instrument(skip(event, state), fields(system_id))]
     async fn switch_member(
         event: SlackCommandEvent,
         state: SlackClientEventsUserState,
         member_id: Option<i64>,
         base: bool,
     ) -> Result<SlackCommandEventResponse, CommandError> {
+        trace!("Switching member");
         let states = state.read().await;
         let user_state = states.get_user_state::<user::State>().unwrap();
 
@@ -101,30 +106,45 @@ impl Members {
             .await
             .change_context(CommandError::Sqlx)?
         else {
+            debug!("User has no system configured");
             return Ok(SlackCommandEventResponse::new(
                 SlackMessageContent::new().with_text("You don't have a system yet!".into()),
             ));
         };
 
+        fields!(system_id = %system.id);
+        debug!("Found user system");
+
         let new_active_member_id = if base {
             None
         } else {
-            member::Id::new(
-                member_id.expect("member_id to be Some, as the clap rules require it to be."),
-            )
-            .validate_by_system(system.id, &user_state.db)
-            .await
-            .ok()
+            let member_id =
+                member_id.expect("member_id to be Some, as the clap rules require it to be.");
+            debug!(requested_member_id = member_id, "Validating member ID");
+
+            member::Id::new(member_id)
+                .validate_by_system(system.id, &user_state.db)
+                .await
+                .ok()
         };
+
+        debug!(target_member_id = ?new_active_member_id, "Changing active member");
 
         let new_member = system
             .change_active_member(new_active_member_id, &user_state.db)
             .await;
 
         let response = match new_member {
-            Ok(Some(member)) => format!("Switch to member {}", member.full_name),
-            Ok(None) => "Switched to base account".into(),
+            Ok(Some(member)) => {
+                info!(member_name = %member.full_name, member_id = %member.id, "Successfully switched to member");
+                format!("Switch to member {}", member.full_name)
+            }
+            Ok(None) => {
+                info!("Successfully switched to base account");
+                "Switched to base account".into()
+            }
             Err(ChangeActiveMemberError::MemberNotFound) => {
+                debug!("Requested member not found in system");
                 "The member you gave doesn't exist!".into()
             }
             Err(ChangeActiveMemberError::Sqlx(err)) => {
@@ -137,31 +157,37 @@ impl Members {
         ))
     }
 
+    #[tracing::instrument(skip(event, state), fields(user_id, system_id))]
     async fn list_members(
         event: SlackCommandEvent,
         state: SlackClientEventsUserState,
         system: Option<String>,
     ) -> Result<SlackCommandEventResponse, CommandError> {
+        trace!("Listing all members");
         let states = state.read().await;
         let user_state = states.get_user_state::<user::State>().unwrap();
 
         // If the input exists, parse it into a user ID
         // If it doesn't exist, use the user ID of the event.
         // If the user ID is invalid, return an error.
-        // Theres probably a better way to write this behaviour but I'm not sure how.
+        // There's probably a better way to write this behaviour but I'm not sure how.
         let Some((user_id, is_author)) = system.map_or_else(
             || Some((user::Id::new(event.user_id), true)),
             |u| user::parse_slack_user_id(&u).map(|id| (id, false)),
         ) else {
+            debug!("Invalid user ID provided in system parameter");
             return Ok(SlackCommandEventResponse::new(
                 SlackMessageContent::new().with_text("Invalid user ID".into()),
             ));
         };
 
+        fields!(user_id = %user_id.clone());
+
         let Some(system) = System::fetch_by_user_id(&user_state.db, &user_id)
             .await
             .change_context(CommandError::Sqlx)?
         else {
+            debug!(target_user_id = %user_id, is_self = is_author, "Target user has no system");
             return if is_author {
                 Ok(SlackCommandEventResponse::new(
                     SlackMessageContent::new().with_text("You don't have a system yet!".into()),
@@ -173,10 +199,14 @@ impl Members {
             };
         };
 
+        fields!(system_id = %system.id);
+
         let members = system
             .get_members(&user_state.db)
             .await
             .change_context(CommandError::Sqlx)?;
+
+        debug!(member_count = members.len(), "Retrieved system members");
 
         let member_blocks = members
             .into_iter()
@@ -213,11 +243,14 @@ impl Members {
         ))
     }
 
+    #[tracing::instrument(skip(event, state), fields(user_id = %event.user_id, system_id, member_id))]
     async fn member_info(
         event: SlackCommandEvent,
         state: &SlackClientEventsUserState,
         member_id: i64,
     ) -> Result<SlackCommandEventResponse, CommandError> {
+        trace!("Running member info command");
+
         let states = state.read().await;
         let user_state = states.get_user_state::<user::State>().unwrap();
         let member_id = member::Id::new(member_id);
@@ -227,6 +260,7 @@ impl Members {
             .change_context(CommandError::Sqlx)?
             .map(|system| system.id)
         else {
+            debug!("User has no system configured");
             return Ok(SlackCommandEventResponse::new(
                 SlackMessageContent::new().with_text(
                     "You don't have a system yet! Make one with `/system create <name>`".into(),
@@ -234,15 +268,21 @@ impl Members {
             ));
         };
 
+        fields!(system_id = %system_id);
+
         let Some(member) = Member::fetch_by_and_trust_id(system_id, member_id, &user_state.db)
             .await
             .change_context(CommandError::Sqlx)?
         else {
+            debug!("Member not found");
             return Ok(SlackCommandEventResponse::new(
                 SlackMessageContent::new()
                     .with_text("Member not found. Make sure you used the correct ID".into()),
             ));
         };
+
+        fields!(member_id = %member.id);
+        debug!("Member found");
 
         let fields = [
             Some(md!("Display Name: {}", member.display_name)),
@@ -270,31 +310,36 @@ impl Members {
         ))
     }
 
+    #[tracing::instrument(skip(event, session), fields(view_id))]
     async fn create_member(
         event: SlackCommandEvent,
         session: SlackClientSession<'_, SlackClientHyperHttpsConnector>,
     ) -> Result<SlackCommandEventResponse, CommandError> {
+        trace!("Running member creation command");
         let view = View::create_add_view();
 
         let view = session
             .views_open(&SlackApiViewsOpenRequest::new(event.trigger_id, view))
             .await
             .attach_printable("Error opening view")
-            .change_context(CommandError::Slack)?;
+            .change_context(CommandError::SlackApi)?;
 
-        debug!("Opened view: {:#?}", view);
+        info!(view_id = %view.view.state_params.id, "Successfully opened member creation view");
 
         Ok(SlackCommandEventResponse::new(
             SlackMessageContent::new().with_text("View opened!".into()),
         ))
     }
 
+    #[tracing::instrument(skip(event, session, state), fields(user_id = %event.user_id, trigger_id = %event.trigger_id))]
     async fn edit_member(
         event: SlackCommandEvent,
         session: SlackClientSession<'_, SlackClientHyperHttpsConnector>,
         state: &SlackClientEventsUserState,
         member_id: i64,
     ) -> Result<SlackCommandEventResponse, CommandError> {
+        trace!("Running member edit command");
+
         let states = state.read().await;
         let user_state = states.get_user_state::<user::State>().unwrap();
         let user_id = user::Id::new(event.user_id);
@@ -305,6 +350,7 @@ impl Members {
             .change_context(CommandError::Sqlx)?
             .map(|system| system.id)
         else {
+            debug!("User has no system configured");
             return Ok(SlackCommandEventResponse::new(
                 SlackMessageContent::new().with_text(
                     "You don't have a system yet! Make one with `/system create <name>`".into(),
@@ -333,9 +379,9 @@ impl Members {
             ))
             .await
             .attach_printable("Error opening view")
-            .change_context(CommandError::Slack)?;
+            .change_context(CommandError::SlackApi)?;
 
-        debug!("Opened view: {:#?}", view);
+        info!(view_id = %view.view.state_params.id, member_id = %member_id, "Successfully opened member edit view");
 
         Ok(SlackCommandEventResponse::new(SlackMessageContent::new()))
     }
