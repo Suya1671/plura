@@ -1,7 +1,7 @@
 use std::{fmt::Display, marker::PhantomData};
 
 use slack_morphism::{errors::SlackClientError, prelude::*};
-use sqlx::{prelude::*, types::Text, Database, SqlitePool};
+use sqlx::{Database, SqlitePool, prelude::*, types::Text};
 
 use crate::BOT_TOKEN;
 
