@@ -8,7 +8,7 @@ use tracing::{debug, trace};
 
 use crate::{
     fields,
-    models::{system, user},
+    models::{self, user},
     oauth::create_oauth_client,
 };
 
@@ -88,7 +88,7 @@ impl System {
         fields!(user_id = %&user_id);
         trace!("Mapped user ID");
 
-        let system = system::System::fetch_by_user_id(&user_state.db, &user_id)
+        let system = models::System::fetch_by_user_id(&user_state.db, &user_id)
             .await
             .change_context(CommandError::Sqlx)?;
 
@@ -137,7 +137,7 @@ impl System {
         let user_state = states.get_user_state::<user::State>().unwrap();
 
         let Some(system_id) =
-            system::System::fetch_by_user_id(&user_state.db, &event.user_id.into())
+            models::System::fetch_by_user_id(&user_state.db, &event.user_id.into())
                 .await
                 .change_context(CommandError::Sqlx)?
                 .map(|s| s.id)
@@ -175,7 +175,7 @@ impl System {
         let user_state = states.get_user_state::<user::State>().unwrap();
         let user_id = user::Id::new(event.user_id);
 
-        if let Some(system) = system::System::fetch_by_user_id(&user_state.db, &user_id)
+        if let Some(system) = models::System::fetch_by_user_id(&user_state.db, &user_id)
             .await
             .change_context(CommandError::Sqlx)?
         {

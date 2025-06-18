@@ -6,15 +6,11 @@ use tracing::debug;
 
 use crate::{
     BOT_TOKEN, fields,
-    models::{
-        member::{self, Member},
-        system::System,
-        trigger, user,
-    },
+    models::{self, member, trigger, user},
 };
 
 #[derive(clap::Subcommand, Debug)]
-pub enum Triggers {
+pub enum Trigger {
     /// Adds a new trigger for a member. Expect a popup to fill in the info!
     Add {
         /// The member to add the trigger for. Use the member id from /member list
@@ -45,7 +41,7 @@ pub enum CommandError {
     Sqlx,
 }
 
-impl Triggers {
+impl Trigger {
     #[tracing::instrument(skip_all)]
     pub async fn run(
         self,
@@ -81,7 +77,7 @@ impl Triggers {
         let member_id = member::Id::new(member_id);
 
         let Some(system_id) =
-            System::fetch_by_user_id(&user_state.db, &user::Id::new(event.user_id))
+            models::System::fetch_by_user_id(&user_state.db, &user::Id::new(event.user_id))
                 .await
                 .change_context(CommandError::Sqlx)?
                 .map(|system| system.id)
@@ -96,10 +92,11 @@ impl Triggers {
 
         fields!(system_id = %system_id);
 
-        let Some(member_id) = Member::fetch_by_and_trust_id(system_id, member_id, &user_state.db)
-            .await
-            .change_context(CommandError::Sqlx)?
-            .map(|member| member.id)
+        let Some(member_id) =
+            models::Member::fetch_by_and_trust_id(system_id, member_id, &user_state.db)
+                .await
+                .change_context(CommandError::Sqlx)?
+                .map(|member| member.id)
         else {
             debug!("Member not found");
             return Ok(SlackCommandEventResponse::new(
@@ -136,7 +133,7 @@ impl Triggers {
         let trigger_id = trigger::Id::new(trigger_id);
 
         let Some(system_id) =
-            System::fetch_by_user_id(&user_state.db, &user::Id::new(event.user_id))
+            models::System::fetch_by_user_id(&user_state.db, &user::Id::new(event.user_id))
                 .await
                 .change_context(CommandError::Sqlx)?
                 .map(|system| system.id)
@@ -183,7 +180,7 @@ impl Triggers {
         let user_state = states.get_user_state::<user::State>().unwrap();
 
         let Some(system_id) =
-            System::fetch_by_user_id(&user_state.db, &user::Id::new(event.user_id))
+            models::System::fetch_by_user_id(&user_state.db, &user::Id::new(event.user_id))
                 .await
                 .change_context(CommandError::Sqlx)?
                 .map(|system| system.id)
@@ -268,7 +265,7 @@ impl Triggers {
         let trigger_id = trigger::Id::new(trigger_id);
 
         let Some(system_id) =
-            System::fetch_by_user_id(&user_state.db, &user::Id::new(event.user_id))
+            models::System::fetch_by_user_id(&user_state.db, &user::Id::new(event.user_id))
                 .await
                 .change_context(CommandError::Sqlx)?
                 .map(|system| system.id)
@@ -297,7 +294,7 @@ impl Triggers {
         fields!(trigger_id = %trigger_id);
 
         // Fetch the trigger to edit
-        let trigger = trigger::Trigger::fetch_by_id(trigger_id, &user_state.db)
+        let trigger = models::Trigger::fetch_by_id(trigger_id, &user_state.db)
             .await
             .change_context(CommandError::Sqlx)?;
 

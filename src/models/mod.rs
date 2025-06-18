@@ -7,6 +7,12 @@ pub mod system;
 pub mod trigger;
 pub mod user;
 
+pub use alias::Alias;
+pub use member::{Member, TriggeredMember};
+pub use message::MessageLog;
+pub use system::System;
+pub use trigger::Trigger;
+
 pub trait Trustability: Send + Sync + Debug {}
 
 /// A trusted/valid ID

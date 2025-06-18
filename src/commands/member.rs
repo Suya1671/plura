@@ -5,18 +5,17 @@ use slack_morphism::prelude::*;
 use tracing::{debug, info, trace};
 
 use crate::{
-    BOT_TOKEN,
-    commands::members,
-    fields,
+    BOT_TOKEN, fields,
     models::{
-        member::{self, Member, View},
-        system::{ChangeActiveMemberError, System},
+        self,
+        member::{self, View},
+        system::ChangeActiveMemberError,
         user,
     },
 };
 
 #[derive(clap::Subcommand, Debug)]
-pub enum Members {
+pub enum Member {
     /// Adds a new member to your system. Expect a popup to fill in the member info!
     Add,
     /// Deletes a member from your system. Use the member id from /member list
@@ -59,7 +58,7 @@ pub enum CommandError {
     Sqlx,
 }
 
-impl Members {
+impl Member {
     #[tracing::instrument(skip_all)]
     pub async fn run(
         self,
@@ -102,9 +101,10 @@ impl Members {
         let states = state.read().await;
         let user_state = states.get_user_state::<user::State>().unwrap();
 
-        let Some(mut system) = System::fetch_by_user_id(&user_state.db, &event.user_id.into())
-            .await
-            .change_context(CommandError::Sqlx)?
+        let Some(mut system) =
+            models::System::fetch_by_user_id(&user_state.db, &event.user_id.into())
+                .await
+                .change_context(CommandError::Sqlx)?
         else {
             debug!("User has no system configured");
             return Ok(SlackCommandEventResponse::new(
@@ -183,7 +183,7 @@ impl Members {
 
         fields!(user_id = %user_id.clone());
 
-        let Some(system) = System::fetch_by_user_id(&user_state.db, &user_id)
+        let Some(system) = models::System::fetch_by_user_id(&user_state.db, &user_id)
             .await
             .change_context(CommandError::Sqlx)?
         else {
@@ -255,10 +255,11 @@ impl Members {
         let user_state = states.get_user_state::<user::State>().unwrap();
         let member_id = member::Id::new(member_id);
 
-        let Some(system_id) = System::fetch_by_user_id(&user_state.db, &event.user_id.into())
-            .await
-            .change_context(CommandError::Sqlx)?
-            .map(|system| system.id)
+        let Some(system_id) =
+            models::System::fetch_by_user_id(&user_state.db, &event.user_id.into())
+                .await
+                .change_context(CommandError::Sqlx)?
+                .map(|system| system.id)
         else {
             debug!("User has no system configured");
             return Ok(SlackCommandEventResponse::new(
@@ -270,9 +271,10 @@ impl Members {
 
         fields!(system_id = %system_id);
 
-        let Some(member) = Member::fetch_by_and_trust_id(system_id, member_id, &user_state.db)
-            .await
-            .change_context(CommandError::Sqlx)?
+        let Some(member) =
+            models::Member::fetch_by_and_trust_id(system_id, member_id, &user_state.db)
+                .await
+                .change_context(CommandError::Sqlx)?
         else {
             debug!("Member not found");
             return Ok(SlackCommandEventResponse::new(
@@ -345,7 +347,7 @@ impl Members {
         let user_id = user::Id::new(event.user_id);
         let member_id = member::Id::new(member_id);
 
-        let Some(system_id) = System::fetch_by_user_id(&user_state.db, &user_id)
+        let Some(system_id) = models::System::fetch_by_user_id(&user_state.db, &user_id)
             .await
             .change_context(CommandError::Sqlx)?
             .map(|system| system.id)
@@ -358,9 +360,10 @@ impl Members {
             ));
         };
 
-        let Some(member) = Member::fetch_by_and_trust_id(system_id, member_id, &user_state.db)
-            .await
-            .change_context(CommandError::Sqlx)?
+        let Some(member) =
+            models::Member::fetch_by_and_trust_id(system_id, member_id, &user_state.db)
+                .await
+                .change_context(CommandError::Sqlx)?
         else {
             return Ok(SlackCommandEventResponse::new(
                 SlackMessageContent::new()
@@ -370,7 +373,7 @@ impl Members {
 
         let member_id = member.id;
 
-        let view = members::View::from(member).create_edit_view(member_id);
+        let view = member::View::from(member).create_edit_view(member_id);
 
         let view = session
             .views_open(&SlackApiViewsOpenRequest::new(

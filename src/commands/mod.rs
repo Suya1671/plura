@@ -1,17 +1,17 @@
 use std::sync::Arc;
 
-mod members;
+mod member;
 mod system;
-mod triggers;
+mod trigger;
 use axum::{Extension, Json};
 use clap::{Parser, error::ErrorKind};
 use error_stack::ResultExt;
-use members::Members;
+use member::Member;
 
 use slack_morphism::prelude::*;
 use system::System;
 use tracing::{Level, debug, error, trace};
-use triggers::Triggers;
+use trigger::Trigger;
 
 use crate::fields;
 
@@ -19,11 +19,11 @@ use crate::fields;
 #[command(color(clap::ColorChoice::Never))]
 enum Command {
     #[clap(subcommand)]
-    Members(Members),
+    Members(Member),
     #[clap(subcommand)]
     System(System),
     #[clap(subcommand)]
-    Triggers(Triggers),
+    Triggers(Trigger),
 }
 
 impl Command {
