@@ -1,10 +1,17 @@
 use std::fmt::Debug;
 
+pub mod alias;
 pub mod member;
 pub mod message;
 pub mod system;
 pub mod trigger;
 pub mod user;
+
+pub use alias::Alias;
+pub use member::{Member, TriggeredMember};
+pub use message::MessageLog;
+pub use system::System;
+pub use trigger::Trigger;
 
 pub trait Trustability: Send + Sync + Debug {}
 
@@ -26,9 +33,20 @@ macro_rules! id {
     ($(#[$attr:meta])* => $name:ident) => {
         #[derive(::sqlx::Type, Debug, PartialEq, Eq, Clone, Copy)]
         $(#[$attr])*
-        pub struct Id<T> {
+        pub struct Id<T: $crate::models::Trustability> {
             pub id: i64,
             trusted: ::std::marker::PhantomData<T>,
+        }
+
+        impl ::std::str::FromStr for Id<$crate::models::Untrusted> {
+            type Err = ::std::num::ParseIntError;
+
+            fn from_str(s: &str) -> ::std::result::Result<Self, Self::Err> {
+                Ok(Id {
+                    id: s.parse()?,
+                    trusted: ::std::marker::PhantomData,
+                })
+            }
         }
 
         impl<'q, DB> Encode<'q, DB> for Id<$crate::models::Trusted>
@@ -39,7 +57,7 @@ macro_rules! id {
             fn encode_by_ref(
                 &self,
                 buf: &mut <DB as ::sqlx::Database>::ArgumentBuffer<'q>,
-            ) -> Result<::sqlx::encode::IsNull, ::sqlx::error::BoxDynError> {
+            ) -> ::std::result::Result<::sqlx::encode::IsNull, ::sqlx::error::BoxDynError> {
                 <i64 as ::sqlx::Encode<'_, DB>>::encode_by_ref(&self.id, buf)
             }
 
@@ -55,7 +73,7 @@ macro_rules! id {
         {
             fn decode(
                 value: <DB as ::sqlx::Database>::ValueRef<'q>,
-            ) -> Result<Self, ::sqlx::error::BoxDynError> {
+            ) -> ::std::result::Result<Self, ::sqlx::error::BoxDynError> {
                 let id = <i64 as ::sqlx::Decode<'_, DB>>::decode(value)?;
                 Ok(Id {
                     id,

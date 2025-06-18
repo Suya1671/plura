@@ -1,4 +1,6 @@
-use error_stack::ResultExt;
+use std::{convert::Infallible, str::FromStr};
+
+use error_stack::{Result, ResultExt};
 use slack_morphism::prelude::*;
 use sqlx::{SqlitePool, prelude::*, sqlite::SqliteQueryResult};
 use tracing::{debug, warn};
@@ -7,17 +9,9 @@ use crate::id;
 
 use super::{
     Trusted, Untrusted, system,
-    trigger::{self, Trigger, Type},
+    trigger::{Trigger, Type},
     user,
 };
-
-#[derive(thiserror::Error, displaydoc::Display, Debug)]
-pub enum Error {
-    /// Error while calling the database
-    Sqlx,
-    /// A field was missing from the view
-    MissingField(String),
-}
 
 id!(
     /// For an ID to be trusted, it must
@@ -35,68 +29,112 @@ impl Id<Untrusted> {
         }
     }
 
+    #[tracing::instrument(skip(db))]
     pub async fn validate_by_system(
         self,
         system_id: system::Id<Trusted>,
         db: &SqlitePool,
-    ) -> Result<Id<Trusted>, Self> {
-        let exists = sqlx::query!(
-            "SELECT EXISTS(SELECT 1 FROM members WHERE id = $1 AND system_id = $2) AS 'exists: bool'",
+    ) -> Result<Option<Id<Trusted>>, sqlx::Error> {
+        sqlx::query!(
+            "SELECT
+                id as 'id: Id<Trusted>'
+            FROM members
+            WHERE id = $1 AND system_id = $2",
             self.id,
             system_id.id
         )
-        .fetch_one(db)
+        .fetch_optional(db)
         .await
-        .ok()
-        .is_some_and(|record| record.exists);
-
-        if exists {
-            Ok(Id {
-                id: self.id,
-                trusted: std::marker::PhantomData,
-            })
-        } else {
-            Err(self)
-        }
+        .attach_printable("Failed to validate member by system")
+        .map(|res| res.map(|res| res.id))
     }
 
+    #[tracing::instrument(skip(db))]
     pub async fn validate_by_user(
         self,
         user_id: &user::Id<Trusted>,
         db: &SqlitePool,
-    ) -> Result<Id<Trusted>, Self> {
-        let exists = sqlx::query!(
-            "SELECT EXISTS(
-                SELECT 1
+    ) -> Result<Option<Id<Trusted>>, sqlx::Error> {
+        sqlx::query!(
+            "
+                SELECT
+                    members.id as 'id: Id<Trusted>'
                 FROM members
                 JOIN systems ON members.system_id = systems.id
                 WHERE members.id = $1 AND systems.owner_id = $2
-            ) AS 'exists: bool'",
+            ",
             self.id,
             user_id
         )
-        .fetch_one(db)
+        .fetch_optional(db)
         .await
-        .ok()
-        .is_some_and(|record| record.exists);
+        .attach_printable("Failed to validate member by user")
+        .map(|res| res.map(|res| res.id))
+    }
 
-        if exists {
-            Ok(Id {
-                id: self.id,
-                trusted: std::marker::PhantomData,
-            })
-        } else {
-            Err(self)
-        }
+    #[tracing::instrument(skip(db))]
+    pub async fn fetch_by_alias(
+        alias: &str,
+        system_id: system::Id<Trusted>,
+        db: &SqlitePool,
+    ) -> Result<Option<Id<Trusted>>, sqlx::Error> {
+        sqlx::query!(
+            "SELECT
+                member_id AS 'id: Id<Trusted>'
+            FROM aliases
+            WHERE alias = $1 AND system_id = $2",
+            alias,
+            system_id
+        )
+        .fetch_optional(db)
+        .await
+        .attach_printable("Failed to fetch member id by alias")
+        .map(|res| res.map(|res| res.id))
     }
 }
 
 impl Id<Trusted> {
-    pub async fn fetch_triggers(
-        self,
+    #[tracing::instrument(skip(db))]
+    pub async fn fetch_triggers(self, db: &SqlitePool) -> Result<Vec<Trigger>, sqlx::Error> {
+        Trigger::fetch_by_member_id(self, db).await
+    }
+}
+
+#[derive(Debug, Clone)]
+/// An untrusted member reference from an external source
+pub enum MemberRef {
+    Id(Id<Untrusted>),
+    /// We were given a [`super::Alias`]
+    Alias(String),
+}
+
+impl FromStr for MemberRef {
+    type Err = Infallible;
+
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        s.parse::<i64>().map_or_else(
+            |_| Ok(Self::Alias(s.to_string())),
+            |id| Ok(Self::Id(Id::new(id))),
+        )
+    }
+}
+
+impl MemberRef {
+    #[tracing::instrument(skip(db))]
+    pub async fn validate_by_system(
+        &self,
+        system_id: system::Id<Trusted>,
         db: &SqlitePool,
-    ) -> error_stack::Result<Vec<Trigger>, trigger::Error> {
-        Trigger::fetch_by_member_id(db, self).await
+    ) -> Result<Option<Id<Trusted>>, sqlx::Error> {
+        match self {
+            Self::Id(id) => id
+                .validate_by_system(system_id, db)
+                .await
+                .attach_printable("Failed to validate member reference via id and system"),
+            Self::Alias(alias) => Id::fetch_by_alias(alias, system_id, db)
+                .await
+                .attach_printable("Failed to validate member reference via alias and system"),
+        }
     }
 }
 
@@ -121,41 +159,9 @@ pub struct Member {
 }
 
 impl Member {
-    pub async fn fetch_by_and_trust_id(
-        system_id: system::Id<Trusted>,
-        member_id: Id<Untrusted>,
-        db: &SqlitePool,
-    ) -> Result<Option<Self>, sqlx::Error> {
-        sqlx::query_as!(
-            Member,
-            r#"
-            SELECT
-                id as "id: Id<Trusted>",
-                system_id as "system_id: system::Id<Trusted>",
-                full_name,
-                display_name,
-                profile_picture_url,
-                title,
-                pronouns,
-                name_pronunciation,
-                name_recording_url,
-                created_at as "created_at: time::PrimitiveDateTime"
-            FROM members
-            WHERE system_id = $1 AND id = $2
-            "#,
-            system_id,
-            // Safe because this query also checks if the ID is trusted
-            member_id.id
-        )
-        .fetch_optional(db)
-        .await
-    }
-
     /// Fetch a member by their id
-    pub async fn fetch_by_id(
-        member_id: Id<Trusted>,
-        db: &SqlitePool,
-    ) -> Result<Option<Self>, sqlx::Error> {
+    #[tracing::instrument(skip(db))]
+    pub async fn fetch_by_id(member_id: Id<Trusted>, db: &SqlitePool) -> Result<Self, sqlx::Error> {
         sqlx::query_as!(
             Member,
             r#"
@@ -171,12 +177,13 @@ impl Member {
                 name_recording_url,
                 created_at as "created_at: time::PrimitiveDateTime"
             FROM members
-            WHERE id = $2
+            WHERE id = $1
             "#,
             member_id
         )
-        .fetch_optional(db)
+        .fetch_one(db)
         .await
+        .attach_printable("Failed to fetch member by id")
     }
 }
 
@@ -207,7 +214,7 @@ impl From<Member> for TriggeredMember {
     }
 }
 
-#[derive(Default, Clone)]
+#[derive(Debug, Default, Clone)]
 pub struct View {
     pub full_name: String,
     pub display_name: String,
@@ -311,11 +318,12 @@ impl View {
     /// Add a member to the database
     ///
     /// Returns the id of the new member
+    #[tracing::instrument(skip(db))]
     pub async fn add(
         &self,
         system_id: system::Id<Trusted>,
         db: &SqlitePool,
-    ) -> error_stack::Result<i64, Error> {
+    ) -> error_stack::Result<i64, sqlx::Error> {
         debug!("Adding member {} to database", self.display_name);
         sqlx::query!("
             INSERT INTO members (full_name, display_name, profile_picture_url, title, pronouns, name_pronunciation, name_recording_url, system_id)
@@ -334,18 +342,18 @@ impl View {
         .fetch_one(db)
         .await
         .attach_printable("Error adding member to database")
-        .change_context(Error::Sqlx)
         .map(|row| row.id)
     }
 
     /// Update a member in the database to match this view
     ///
     /// Returns None if the member does not exist
+    #[tracing::instrument(skip(db))]
     pub async fn update(
         &self,
         member_id: Id<Trusted>,
         db: &SqlitePool,
-    ) -> error_stack::Result<Option<SqliteQueryResult>, Error> {
+    ) -> error_stack::Result<SqliteQueryResult, sqlx::Error> {
         sqlx::query!("
             UPDATE members
             SET full_name = $1, display_name = $2, profile_picture_url = $3, title = $4, pronouns = $5, name_pronunciation = $6, name_recording_url = $7
@@ -361,15 +369,17 @@ impl View {
             member_id,
         ).execute(db).await
         .attach_printable("Error editing member in database")
-        .change_context(Error::Sqlx)
-        .map(Some)
     }
 }
 
-impl TryFrom<SlackViewState> for View {
-    type Error = Error;
+#[derive(thiserror::Error, displaydoc::Display, Debug)]
+/// A field was missing from the view
+pub struct MissingFieldError(String);
 
-    fn try_from(value: SlackViewState) -> Result<Self, Self::Error> {
+impl TryFrom<SlackViewState> for View {
+    type Error = MissingFieldError;
+
+    fn try_from(value: SlackViewState) -> std::result::Result<Self, Self::Error> {
         let mut view = Self::default();
         for (_id, values) in value.values {
             for (id, content) in values {
@@ -377,12 +387,12 @@ impl TryFrom<SlackViewState> for View {
                     "full_name" => {
                         view.full_name = content
                             .value
-                            .ok_or_else(|| Error::MissingField("display_name".to_string()))?;
+                            .ok_or_else(|| MissingFieldError("display_name".to_string()))?;
                     }
                     "display_name" => {
                         view.display_name = content
                             .value
-                            .ok_or_else(|| Error::MissingField("display_name".to_string()))?;
+                            .ok_or_else(|| MissingFieldError("display_name".to_string()))?;
                     }
                     "profile_picture_url" => view.profile_picture_url = content.value,
                     "title" => view.title = content.value,
@@ -397,11 +407,11 @@ impl TryFrom<SlackViewState> for View {
         }
 
         if view.full_name.is_empty() {
-            return Err(Error::MissingField("full_name".to_string()));
+            return Err(MissingFieldError("full_name".to_string()));
         }
 
         if view.display_name.is_empty() {
-            return Err(Error::MissingField("display_name".to_string()));
+            return Err(MissingFieldError("display_name".to_string()));
         }
 
         Ok(view)

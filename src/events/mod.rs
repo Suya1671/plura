@@ -9,13 +9,7 @@ use tracing::{debug, error, trace};
 
 use crate::{
     BOT_TOKEN, fields,
-    models::{
-        member::{Member, TriggeredMember},
-        message::MessageLog,
-        system::System,
-        trigger::Type,
-        user,
-    },
+    models::{self, trigger, user},
 };
 
 #[derive(thiserror::Error, displaydoc::Display, Debug)]
@@ -58,7 +52,9 @@ pub async fn process_push_event(
         SlackPushEvent::EventCallback(event) => {
             let client = environment.client.clone();
             let state = environment.user_state.clone();
-            if let Err(e) = push_event_callback(event, client, state).await {
+            // https://rust-lang.github.io/rust-clippy/master/index.html#large_futures
+            // Into the box you go
+            if let Err(e) = Box::pin(push_event_callback(event, client, state)).await {
                 error!("Error processing push event: {:#?}", e);
             }
 
@@ -84,14 +80,21 @@ async fn push_event_callback(
                 .as_ref()
                 .is_some_and(|subtype| *subtype == SlackMessageEventType::MessageDeleted) =>
         {
-            fields!(event_type = ?SlackMessageEventType::MessageDeleted);
+            fields!(event_type = ?SlackMessageEventType::MessageDeleted, message_id = ?&message_event.deleted_ts, user = ?message_event.sender);
             let states = state.read().await;
             let user_state = states.get_user_state::<user::State>().unwrap();
 
-            MessageLog::delete_by_message_id(message_event.deleted_ts.unwrap().0, &user_state.db)
-                .await
-                .change_context(PushEventError::SlackApi)
-                .attach_printable("Failed to delete message log")
+            models::MessageLog::delete_by_message_id(
+                message_event.deleted_ts.unwrap().0,
+                &user_state.db,
+            )
+            .await
+            .change_context(PushEventError::SlackApi)
+            .attach_printable("Failed to delete message log")
+            .map(|_| ())?;
+
+            debug!("Message log deleted");
+            Ok(())
         }
         SlackEventCallbackBody::Message(message_event)
             if message_event.subtype.is_none()
@@ -125,7 +128,7 @@ async fn handle_message(
 
     fields!(user_id = ?&user_id);
 
-    let Some(mut system) = System::fetch_by_user_id(&user_state.db, &user_id)
+    let Some(mut system) = models::System::fetch_by_user_id(&user_state.db, &user_id)
         .await
         .change_context(PushEventError::SystemFetch)?
     else {
@@ -185,13 +188,9 @@ async fn handle_message(
     // No triggers ran, so check if there's any actively fronting member
     if let Some(member_id) = system.active_member_id {
         fields!(member = %&member_id);
-        let Some(member) = Member::fetch_by_id(member_id, &user_state.db)
+        let member = models::Member::fetch_by_id(member_id, &user_state.db)
             .await
-            .change_context(PushEventError::MemberFetch)?
-        else {
-            error!("Active member not found. This should not happen.");
-            return Ok(());
-        };
+            .change_context(PushEventError::MemberFetch)?;
         fields!(member = ?&member);
 
         rewrite_message(
@@ -216,8 +215,8 @@ async fn rewrite_message(
     channel_id: &SlackChannelId,
     message_id: SlackTs,
     mut content: SlackMessageContent,
-    member: TriggeredMember,
-    system: &System,
+    member: models::TriggeredMember,
+    system: &models::System,
     db: &SqlitePool,
 ) -> error_stack::Result<(), RewriteMessageError> {
     let token = SlackApiToken::new(system.slack_oauth_token.expose().into())
@@ -303,7 +302,7 @@ async fn rewrite_message(
         .await
         .change_context(RewriteMessageError::PostMessage)?;
 
-    MessageLog::insert(member.id, res.ts, db)
+    models::MessageLog::insert(member.id, res.ts, db)
         .await
         .change_context(RewriteMessageError::MessageLog)?;
 
@@ -317,17 +316,17 @@ async fn rewrite_message(
     Ok(())
 }
 
-fn rewrite_content(content: &mut SlackMessageContent, member: &TriggeredMember) {
+fn rewrite_content(content: &mut SlackMessageContent, member: &models::TriggeredMember) {
     debug!("Rewriting message content");
 
     if let Some(text) = &mut content.text {
         match member.typ {
-            Type::Prefix => {
+            trigger::Type::Prefix => {
                 if let Some(new_text) = text.strip_prefix(&member.trigger_text) {
                     *text = new_text.to_string();
                 }
             }
-            Type::Suffix => {
+            trigger::Type::Suffix => {
                 if let Some(new_text) = text.strip_suffix(&member.trigger_text) {
                     *text = new_text.to_string();
                 }
@@ -344,7 +343,7 @@ fn rewrite_content(content: &mut SlackMessageContent, member: &TriggeredMember) 
                 let first = elements.get_mut(0).unwrap();
 
                 if let Some(first_text) = first.pointer_mut("/elements/0/text") {
-                    if member.typ == Type::Prefix {
+                    if member.typ == trigger::Type::Prefix {
                         if let Some(new_text) = first_text
                             .as_str()
                             .and_then(|text| text.strip_prefix(&member.trigger_text))
@@ -358,7 +357,7 @@ fn rewrite_content(content: &mut SlackMessageContent, member: &TriggeredMember) 
                 let last = elements.get_mut(len - 1).unwrap();
 
                 if let Some(last_text) = last.pointer_mut("/elements/0/text") {
-                    if member.typ == Type::Suffix {
+                    if member.typ == trigger::Type::Suffix {
                         if let Some(new_text) = last_text
                             .as_str()
                             .and_then(|text| text.strip_suffix(&member.trigger_text))

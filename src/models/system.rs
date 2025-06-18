@@ -1,5 +1,5 @@
 use crate::{
-    id,
+    fields, id,
     models::member::{Member, TriggeredMember},
 };
 
@@ -9,6 +9,7 @@ use super::{
     trigger::Trigger,
     user,
 };
+use error_stack::{Result, ResultExt};
 use redact::Secret;
 use sqlx::{SqlitePool, prelude::*};
 use tracing::debug;
@@ -22,10 +23,12 @@ id!(
 );
 
 impl Id<Trusted> {
+    #[tracing::instrument(skip(db))]
     pub async fn list_triggers(self, db: &SqlitePool) -> Result<Vec<Trigger>, sqlx::Error> {
-        Trigger::fetch_by_system_id(db, self).await
+        Trigger::fetch_by_system_id(self, db).await
     }
 
+    #[tracing::instrument(skip(db))]
     pub async fn rename(self, new_name: &str, db: &SqlitePool) -> Result<(), sqlx::Error> {
         sqlx::query!(
             "UPDATE systems SET name = ? WHERE id = ?",
@@ -36,6 +39,45 @@ impl Id<Trusted> {
         .await?;
 
         Ok(())
+    }
+
+    #[tracing::instrument(skip(db))]
+    pub async fn change_active_member(
+        self,
+        new_active_member_id: Option<member::Id<Trusted>>,
+        db: &SqlitePool,
+    ) -> Result<Option<Member>, sqlx::Error> {
+        debug!(
+            "Changing active member for {} to {:?}",
+            self, new_active_member_id
+        );
+
+        let mut new_active_member = None;
+
+        if let Some(new_active_member_id) = new_active_member_id {
+            new_active_member = Some(
+                Member::fetch_by_id(new_active_member_id, db)
+                    .await
+                    .attach_printable("Failed to fetch member")?,
+            );
+        }
+
+        fields!(new_active_member = ?&new_active_member);
+
+        sqlx::query!(
+            r#"
+            UPDATE systems
+            SET active_member_id = $1
+            WHERE id = $2
+            "#,
+            new_active_member_id,
+            self.id
+        )
+        .execute(db)
+        .await
+        .attach_printable("Failed to update system active member")?;
+
+        Ok(new_active_member)
     }
 }
 
@@ -68,15 +110,6 @@ pub struct System {
     pub created_at: time::PrimitiveDateTime,
 }
 
-#[derive(Debug, thiserror::Error, displaydoc::Display)]
-/// Error while changing the active member
-pub enum ChangeActiveMemberError {
-    /// Error while calling the database
-    Sqlx(#[from] sqlx::Error),
-    /// The member is not part of the system
-    MemberNotFound,
-}
-
 impl System {
     #[tracing::instrument(skip(db))]
     pub async fn fetch_by_user_id<T>(
@@ -106,11 +139,13 @@ impl System {
         )
         .fetch_optional(db)
         .await
+        .attach_printable("Error fetching system")
     }
 
+    #[tracing::instrument(skip(db))]
     pub async fn active_member(&self, db: &SqlitePool) -> Result<Option<Member>, sqlx::Error> {
         match self.active_member_id {
-            Some(id) => Member::fetch_by_id(id, db).await,
+            Some(id) => Ok(Some(Member::fetch_by_id(id, db).await?)),
             None => Ok(None),
         }
     }
@@ -120,32 +155,11 @@ impl System {
         &mut self,
         new_active_member_id: Option<member::Id<Trusted>>,
         db: &SqlitePool,
-    ) -> Result<Option<Member>, ChangeActiveMemberError> {
-        debug!(
-            "Changing active member for {} to {:?}",
-            self.id, new_active_member_id
-        );
-        let mut new_active_member = None;
-
-        if let Some(new_active_member_id) = new_active_member_id {
-            let Some(member) = Member::fetch_by_id(new_active_member_id, db).await? else {
-                return Err(ChangeActiveMemberError::MemberNotFound);
-            };
-
-            new_active_member = Some(member);
-        }
-
-        sqlx::query!(
-            r#"
-            UPDATE systems
-            SET active_member_id = $1
-            WHERE id = $2
-            "#,
-            new_active_member_id,
-            self.id
-        )
-        .execute(db)
-        .await?;
+    ) -> Result<Option<Member>, sqlx::Error> {
+        let new_active_member = self
+            .id
+            .change_active_member(new_active_member_id, db)
+            .await?;
 
         self.active_member_id = new_active_member_id;
         Ok(new_active_member)
@@ -174,6 +188,7 @@ impl System {
         )
         .fetch_all(db)
         .await
+        .attach_printable("Failed to fetch members")
     }
 
     pub async fn fetch_triggered_member(
@@ -203,5 +218,6 @@ impl System {
         )
         .fetch_optional(db)
         .await
+        .attach_printable("Failed to fetch triggered member")
     }
 }

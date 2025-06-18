@@ -5,35 +5,31 @@ use slack_morphism::prelude::*;
 use tracing::debug;
 
 use crate::{
-    BOT_TOKEN, fields,
-    models::{
-        member::{self, Member},
-        system::System,
-        trigger, user,
-    },
+    BOT_TOKEN, fetch_member, fetch_system, fields,
+    models::{self, Untrusted, member::MemberRef, trigger, user},
 };
 
 #[derive(clap::Subcommand, Debug)]
-pub enum Triggers {
+pub enum Trigger {
     /// Adds a new trigger for a member. Expect a popup to fill in the info!
     Add {
-        /// The member to add the trigger for. Use the member id from /member list
-        member: i64,
+        /// The member to add the trigger for.
+        member: MemberRef,
     },
     /// Deletes a trigger
     Delete {
-        /// The trigger to delete. Use the trigger id from /trigger list
-        id: i64,
+        /// The trigger to delete.
+        id: trigger::Id<Untrusted>,
     },
     /// Lists all of your triggers
     List {
-        /// If specified, lists the triggers for the given member. Use the member id from /member list
-        member: Option<i64>,
+        /// If specified, lists the triggers for the given member.
+        member: Option<MemberRef>,
     },
     /// Edit a trigger
     Edit {
         /// The trigger to edit. Use the trigger id from /trigger list
-        id: i64,
+        id: trigger::Id<Untrusted>,
     },
 }
 
@@ -45,7 +41,7 @@ pub enum CommandError {
     Sqlx,
 }
 
-impl Triggers {
+impl Trigger {
     #[tracing::instrument(skip_all)]
     pub async fn run(
         self,
@@ -74,32 +70,17 @@ impl Triggers {
         event: SlackCommandEvent,
         state: &SlackClientEventsUserState,
         session: SlackClientSession<'_, SlackClientHyperHttpsConnector>,
-        member_id: i64,
+        member_id: MemberRef,
     ) -> Result<SlackCommandEventResponse, CommandError> {
         let states = state.read().await;
         let user_state = states.get_user_state::<user::State>().unwrap();
-        let member_id = member::Id::new(member_id);
 
-        let Some(system_id) =
-            System::fetch_by_user_id(&user_state.db, &user::Id::new(event.user_id))
-                .await
-                .change_context(CommandError::Sqlx)?
-                .map(|system| system.id)
-        else {
-            debug!("User does not have a system");
-            return Ok(SlackCommandEventResponse::new(
-                SlackMessageContent::new().with_text(
-                    "You don't have a system yet! Make one with `/system create <name>`".into(),
-                ),
-            ));
-        };
+        fetch_system!(event, user_state => system_id);
 
-        fields!(system_id = %system_id);
-
-        let Some(member_id) = Member::fetch_by_and_trust_id(system_id, member_id, &user_state.db)
+        let Some(member_id) = member_id
+            .validate_by_system(system_id, &user_state.db)
             .await
             .change_context(CommandError::Sqlx)?
-            .map(|member| member.id)
         else {
             debug!("Member not found");
             return Ok(SlackCommandEventResponse::new(
@@ -129,14 +110,13 @@ impl Triggers {
     pub async fn delete_trigger(
         event: SlackCommandEvent,
         state: &SlackClientEventsUserState,
-        trigger_id: i64,
+        trigger_id: trigger::Id<Untrusted>,
     ) -> Result<SlackCommandEventResponse, CommandError> {
         let states = state.read().await;
         let user_state = states.get_user_state::<user::State>().unwrap();
-        let trigger_id = trigger::Id::new(trigger_id);
 
         let Some(system_id) =
-            System::fetch_by_user_id(&user_state.db, &user::Id::new(event.user_id))
+            models::System::fetch_by_user_id(&user_state.db, &user::Id::new(event.user_id))
                 .await
                 .change_context(CommandError::Sqlx)?
                 .map(|system| system.id)
@@ -177,43 +157,15 @@ impl Triggers {
     pub async fn list_triggers(
         event: SlackCommandEvent,
         state: &SlackClientEventsUserState,
-        member_id: Option<i64>,
+        member_ref: Option<MemberRef>,
     ) -> Result<SlackCommandEventResponse, CommandError> {
         let states = state.read().await;
         let user_state = states.get_user_state::<user::State>().unwrap();
 
-        let Some(system_id) =
-            System::fetch_by_user_id(&user_state.db, &user::Id::new(event.user_id))
-                .await
-                .change_context(CommandError::Sqlx)?
-                .map(|system| system.id)
-        else {
-            debug!("User doesn't have a system");
-            return Ok(SlackCommandEventResponse::new(
-                SlackMessageContent::new().with_text(
-                    "You don't have a system yet! Make one with `/system create <name>`".into(),
-                ),
-            ));
-        };
+        fetch_system!(event, user_state => system_id);
 
-        fields!(system_id = %system_id);
-
-        let triggers = if let Some(member_id) = member_id {
-            let member_id = member::Id::new(member_id);
-
-            // Validate the member belongs to the user's system
-            let Ok(member_id) = member_id
-                .validate_by_system(system_id, &user_state.db)
-                .await
-            else {
-                debug!("Member not found");
-                return Ok(SlackCommandEventResponse::new(
-                    SlackMessageContent::new()
-                        .with_text("Member not found. Make sure you used the correct ID".into()),
-                ));
-            };
-
-            fields!(member_id = %member_id);
+        let triggers = if let Some(member_ref) = member_ref {
+            fetch_member!(member_ref, user_state, system_id => member_id);
 
             member_id
                 .fetch_triggers(&user_state.db)
@@ -261,27 +213,12 @@ impl Triggers {
         event: SlackCommandEvent,
         state: &SlackClientEventsUserState,
         session: SlackClientSession<'_, SlackClientHyperHttpsConnector>,
-        trigger_id: i64,
+        trigger_id: trigger::Id<Untrusted>,
     ) -> Result<SlackCommandEventResponse, CommandError> {
         let states = state.read().await;
         let user_state = states.get_user_state::<user::State>().unwrap();
-        let trigger_id = trigger::Id::new(trigger_id);
 
-        let Some(system_id) =
-            System::fetch_by_user_id(&user_state.db, &user::Id::new(event.user_id))
-                .await
-                .change_context(CommandError::Sqlx)?
-                .map(|system| system.id)
-        else {
-            debug!("User does not have a system");
-            return Ok(SlackCommandEventResponse::new(
-                SlackMessageContent::new().with_text(
-                    "You don't have a system yet! Make one with `/system create <name>`".into(),
-                ),
-            ));
-        };
-
-        fields!(system_id = %system_id);
+        fetch_system!(event, user_state => system_id);
 
         // Validate the trigger belongs to the user's system
         let Ok(trigger_id) = trigger_id
@@ -297,7 +234,7 @@ impl Triggers {
         fields!(trigger_id = %trigger_id);
 
         // Fetch the trigger to edit
-        let trigger = trigger::Trigger::fetch_by_id(trigger_id, &user_state.db)
+        let trigger = models::Trigger::fetch_by_id(trigger_id, &user_state.db)
             .await
             .change_context(CommandError::Sqlx)?;
 

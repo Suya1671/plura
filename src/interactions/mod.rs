@@ -114,7 +114,8 @@ async fn handle_modal_view(
                 return Ok(());
             };
 
-            let Ok(trusted_member_id) = member_id.validate_by_user(&user_id, &user_state.db).await
+            let Some(trusted_member_id) =
+                member_id.validate_by_user(&user_id, &user_state.db).await?
             else {
                 error!(
                     id,
@@ -137,7 +138,8 @@ async fn handle_modal_view(
                 .map(models::member::Id::new)
                 .expect("Failed to parse member id from external id");
 
-            let Ok(trusted_member_id) = member_id.validate_by_user(&user_id, &user_state.db).await
+            let Some(trusted_member_id) =
+                member_id.validate_by_user(&user_id, &user_state.db).await?
             else {
                 error!(
                     id,

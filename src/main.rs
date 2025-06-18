@@ -1,5 +1,6 @@
 #![doc = include_str!("../README.md")]
-#![warn(clippy::pedantic, clippy::nursery, missing_docs)]
+#![warn(clippy::pedantic, clippy::nursery, missing_docs, clippy::cargo)]
+#![allow(clippy::multiple_crate_versions)]
 
 mod commands;
 mod env;
