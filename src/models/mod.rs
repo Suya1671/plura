@@ -1,5 +1,6 @@
 use std::fmt::Debug;
 
+pub mod alias;
 pub mod member;
 pub mod message;
 pub mod system;
