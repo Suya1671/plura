@@ -1,4 +1,4 @@
-use error_stack::ResultExt;
+use error_stack::{Result, ResultExt};
 use slack_morphism::prelude::*;
 use sqlx::{SqlitePool, prelude::*, sqlite::SqliteQueryResult};
 use tracing::{debug, warn};
@@ -7,14 +7,14 @@ use crate::id;
 
 use super::{
     Trusted, Untrusted, system,
-    trigger::{self, Trigger, Type},
+    trigger::{Trigger, Type},
     user,
 };
 
 #[derive(thiserror::Error, displaydoc::Display, Debug)]
 pub enum Error {
     /// Error while calling the database
-    Sqlx,
+    Database,
     /// A field was missing from the view
     MissingField(String),
 }
@@ -39,64 +39,92 @@ impl Id<Untrusted> {
         self,
         system_id: system::Id<Trusted>,
         db: &SqlitePool,
-    ) -> Result<Id<Trusted>, Self> {
-        let exists = sqlx::query!(
-            "SELECT EXISTS(SELECT 1 FROM members WHERE id = $1 AND system_id = $2) AS 'exists: bool'",
+    ) -> Result<Option<Id<Trusted>>, sqlx::Error> {
+        sqlx::query!(
+            "SELECT
+                id as 'id: Id<Trusted>'
+            FROM members
+            WHERE id = $1 AND system_id = $2",
             self.id,
             system_id.id
         )
-        .fetch_one(db)
+        .fetch_optional(db)
         .await
-        .ok()
-        .is_some_and(|record| record.exists);
-
-        if exists {
-            Ok(Id {
-                id: self.id,
-                trusted: std::marker::PhantomData,
-            })
-        } else {
-            Err(self)
-        }
+        .attach_printable("Failed to validate member by system")
+        .map(|res| res.map(|res| res.id))
     }
 
     pub async fn validate_by_user(
         self,
         user_id: &user::Id<Trusted>,
         db: &SqlitePool,
-    ) -> Result<Id<Trusted>, Self> {
-        let exists = sqlx::query!(
-            "SELECT EXISTS(
-                SELECT 1
+    ) -> Result<Option<Id<Trusted>>, sqlx::Error> {
+        sqlx::query!(
+            "
+                SELECT
+                    members.id as 'id: Id<Trusted>'
                 FROM members
                 JOIN systems ON members.system_id = systems.id
                 WHERE members.id = $1 AND systems.owner_id = $2
-            ) AS 'exists: bool'",
+            ",
             self.id,
             user_id
         )
-        .fetch_one(db)
+        .fetch_optional(db)
         .await
-        .ok()
-        .is_some_and(|record| record.exists);
+        .attach_printable("Failed to validate member by user")
+        .map(|res| res.map(|res| res.id))
+    }
 
-        if exists {
-            Ok(Id {
-                id: self.id,
-                trusted: std::marker::PhantomData,
-            })
-        } else {
-            Err(self)
-        }
+    pub async fn fetch_by_alias(
+        alias: &str,
+        system_id: system::Id<Trusted>,
+        db: &SqlitePool,
+    ) -> Result<Option<Id<Trusted>>, sqlx::Error> {
+        sqlx::query!(
+            "SELECT
+                member_id AS 'id: Id<Trusted>'
+            FROM aliases
+            WHERE alias = $1 AND system_id = $2",
+            alias,
+            system_id
+        )
+        .fetch_optional(db)
+        .await
+        .attach_printable("Failed to fetch member id by alias")
+        .map(|res| res.map(|res| res.id))
     }
 }
 
 impl Id<Trusted> {
-    pub async fn fetch_triggers(
-        self,
-        db: &SqlitePool,
-    ) -> error_stack::Result<Vec<Trigger>, trigger::Error> {
+    pub async fn fetch_triggers(self, db: &SqlitePool) -> Result<Vec<Trigger>, sqlx::Error> {
         Trigger::fetch_by_member_id(db, self).await
+    }
+}
+
+#[derive(Debug, derive_more::From)]
+/// An untrusted member reference from an external source
+pub enum MemberRef {
+    Id(Id<Untrusted>),
+    /// We were given a [`super::Alias`]
+    Alias(String),
+}
+
+impl MemberRef {
+    pub async fn validate_by_system(
+        &self,
+        system_id: system::Id<Trusted>,
+        db: &SqlitePool,
+    ) -> Result<Option<Id<Trusted>>, sqlx::Error> {
+        match self {
+            MemberRef::Id(id) => id
+                .validate_by_system(system_id, db)
+                .await
+                .attach_printable("Failed to validate member reference via id and system"),
+            MemberRef::Alias(alias) => Id::fetch_by_alias(alias, system_id, db)
+                .await
+                .attach_printable("Failed to validate member reference via alias and system"),
+        }
     }
 }
 
@@ -149,6 +177,7 @@ impl Member {
         )
         .fetch_optional(db)
         .await
+        .attach_printable("Failed to fetch member by id and trust by system")
     }
 
     /// Fetch a member by their id
@@ -177,6 +206,7 @@ impl Member {
         )
         .fetch_optional(db)
         .await
+        .attach_printable("Failed to fetch member by id")
     }
 }
 
@@ -315,7 +345,7 @@ impl View {
         &self,
         system_id: system::Id<Trusted>,
         db: &SqlitePool,
-    ) -> error_stack::Result<i64, Error> {
+    ) -> error_stack::Result<i64, sqlx::Error> {
         debug!("Adding member {} to database", self.display_name);
         sqlx::query!("
             INSERT INTO members (full_name, display_name, profile_picture_url, title, pronouns, name_pronunciation, name_recording_url, system_id)
@@ -334,7 +364,6 @@ impl View {
         .fetch_one(db)
         .await
         .attach_printable("Error adding member to database")
-        .change_context(Error::Sqlx)
         .map(|row| row.id)
     }
 
@@ -345,7 +374,7 @@ impl View {
         &self,
         member_id: Id<Trusted>,
         db: &SqlitePool,
-    ) -> error_stack::Result<Option<SqliteQueryResult>, Error> {
+    ) -> error_stack::Result<SqliteQueryResult, sqlx::Error> {
         sqlx::query!("
             UPDATE members
             SET full_name = $1, display_name = $2, profile_picture_url = $3, title = $4, pronouns = $5, name_pronunciation = $6, name_recording_url = $7
@@ -361,15 +390,13 @@ impl View {
             member_id,
         ).execute(db).await
         .attach_printable("Error editing member in database")
-        .change_context(Error::Sqlx)
-        .map(Some)
     }
 }
 
 impl TryFrom<SlackViewState> for View {
     type Error = Error;
 
-    fn try_from(value: SlackViewState) -> Result<Self, Self::Error> {
+    fn try_from(value: SlackViewState) -> std::result::Result<Self, Self::Error> {
         let mut view = Self::default();
         for (_id, values) in value.values {
             for (id, content) in values {

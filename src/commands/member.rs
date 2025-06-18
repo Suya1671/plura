@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use error_stack::{Result, ResultExt, report};
+use error_stack::{Result, ResultExt};
 use slack_morphism::prelude::*;
 use tracing::{debug, info, trace};
 
@@ -125,7 +125,7 @@ impl Member {
             member::Id::new(member_id)
                 .validate_by_system(system.id, &user_state.db)
                 .await
-                .ok()
+                .change_context(CommandError::Sqlx)?
         };
 
         debug!(target_member_id = ?new_active_member_id, "Changing active member");
@@ -143,13 +143,13 @@ impl Member {
                 info!("Successfully switched to base account");
                 "Switched to base account".into()
             }
-            Err(ChangeActiveMemberError::MemberNotFound) => {
-                debug!("Requested member not found in system");
-                "The member you gave doesn't exist!".into()
-            }
-            Err(ChangeActiveMemberError::Sqlx(err)) => {
-                return Err(report!(err).change_context(CommandError::Sqlx));
-            }
+            Err(e) => match e.current_context() {
+                ChangeActiveMemberError::MemberNotFound => {
+                    debug!("Requested member not found in system");
+                    "The member you gave doesn't exist!".into()
+                }
+                ChangeActiveMemberError::Sqlx => return Err(e.change_context(CommandError::Sqlx)),
+            },
         };
 
         Ok(SlackCommandEventResponse::new(

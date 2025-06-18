@@ -3,14 +3,15 @@ use std::sync::Arc;
 mod member;
 mod system;
 mod trigger;
+
 use axum::{Extension, Json};
 use clap::{Parser, error::ErrorKind};
 use error_stack::ResultExt;
-use member::Member;
-
 use slack_morphism::prelude::*;
-use system::System;
 use tracing::{Level, debug, error, trace};
+
+use member::Member;
+use system::System;
 use trigger::Trigger;
 
 use crate::fields;

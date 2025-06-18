@@ -1,5 +1,5 @@
 use crate::{
-    id,
+    fields, id,
     models::member::{Member, TriggeredMember},
 };
 
@@ -9,6 +9,7 @@ use super::{
     trigger::Trigger,
     user,
 };
+use error_stack::{Result, ResultExt, bail};
 use redact::Secret;
 use sqlx::{SqlitePool, prelude::*};
 use tracing::debug;
@@ -72,7 +73,7 @@ pub struct System {
 /// Error while changing the active member
 pub enum ChangeActiveMemberError {
     /// Error while calling the database
-    Sqlx(#[from] sqlx::Error),
+    Sqlx,
     /// The member is not part of the system
     MemberNotFound,
 }
@@ -106,6 +107,7 @@ impl System {
         )
         .fetch_optional(db)
         .await
+        .attach_printable("Error fetching system")
     }
 
     pub async fn active_member(&self, db: &SqlitePool) -> Result<Option<Member>, sqlx::Error> {
@@ -128,12 +130,18 @@ impl System {
         let mut new_active_member = None;
 
         if let Some(new_active_member_id) = new_active_member_id {
-            let Some(member) = Member::fetch_by_id(new_active_member_id, db).await? else {
-                return Err(ChangeActiveMemberError::MemberNotFound);
+            let Some(member) = Member::fetch_by_id(new_active_member_id, db)
+                .await
+                .change_context(ChangeActiveMemberError::Sqlx)
+                .attach_printable("Failed to fetch member")?
+            else {
+                bail!(ChangeActiveMemberError::MemberNotFound);
             };
 
             new_active_member = Some(member);
         }
+
+        fields!(new_active_member = ?&new_active_member);
 
         sqlx::query!(
             r#"
@@ -145,7 +153,9 @@ impl System {
             self.id
         )
         .execute(db)
-        .await?;
+        .await
+        .change_context(ChangeActiveMemberError::Sqlx)
+        .attach_printable("Failed to update system active member")?;
 
         self.active_member_id = new_active_member_id;
         Ok(new_active_member)
@@ -174,6 +184,7 @@ impl System {
         )
         .fetch_all(db)
         .await
+        .attach_printable("Failed to fetch members")
     }
 
     pub async fn fetch_triggered_member(
@@ -203,5 +214,6 @@ impl System {
         )
         .fetch_optional(db)
         .await
+        .attach_printable("Failed to fetch triggered member")
     }
 }

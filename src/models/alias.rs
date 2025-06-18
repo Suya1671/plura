@@ -1,9 +1,9 @@
 use crate::id;
 
 use super::{Trustability, Trusted, Untrusted, member, system};
-use error_stack::ResultExt;
+use error_stack::{Result, ResultExt};
 use slack_morphism::prelude::*;
-use sqlx::{SqlitePool, prelude::*};
+use sqlx::{SqlitePool, prelude::*, sqlite::SqliteQueryResult};
 use tracing::{debug, warn};
 
 id!(
@@ -26,30 +26,24 @@ impl Id<Untrusted> {
         self,
         system_id: system::Id<Trusted>,
         db: &SqlitePool,
-    ) -> Result<Id<Trusted>, Self> {
-        let exists = sqlx::query!(
-            "SELECT EXISTS(SELECT 1 FROM aliases WHERE id = $1 AND system_id = $2) AS 'exists: bool'",
+    ) -> Result<Option<Id<Trusted>>, sqlx::Error> {
+        sqlx::query!(
+            "SELECT
+                id as 'id: Id<Trusted>'
+            FROM aliases
+            WHERE id = $1 AND system_id = $2",
             self.id,
             system_id.id
         )
-        .fetch_one(db)
+        .fetch_optional(db)
         .await
-        .ok()
-        .is_some_and(|record| record.exists);
-
-        if exists {
-            Ok(Id {
-                id: self.id,
-                trusted: std::marker::PhantomData,
-            })
-        } else {
-            Err(self)
-        }
+        .map(|res| res.map(|res| res.id))
+        .attach_printable("Failed to fetch alias id from database")
     }
 }
 
 impl Id<Trusted> {
-    pub async fn delete(self, db_pool: &SqlitePool) -> Result<(), sqlx::Error> {
+    pub async fn delete(self, db_pool: &SqlitePool) -> Result<SqliteQueryResult, sqlx::Error> {
         sqlx::query!(
             r#"
                 DELETE FROM aliases
@@ -59,7 +53,7 @@ impl Id<Trusted> {
         )
         .execute(db_pool)
         .await
-        .map(|_| ())
+        .attach_printable("Failed to delete alias from database")
     }
 }
 
@@ -99,6 +93,7 @@ impl Alias {
         )
         .fetch_optional(db)
         .await
+        .attach_printable("Failed to fetch alias from database")
     }
 
     pub async fn fetch_by_system_id(
@@ -122,12 +117,13 @@ impl Alias {
         )
         .fetch_all(db)
         .await
+        .attach_printable("Failed to fetch aliases from database")
     }
 
     pub async fn fetch_by_member_id(
         db: &SqlitePool,
         member_id: member::Id<Trusted>,
-    ) -> error_stack::Result<Vec<Self>, Error> {
+    ) -> error_stack::Result<Vec<Self>, sqlx::Error> {
         sqlx::query_as!(
             Self,
             r#"
@@ -144,7 +140,7 @@ impl Alias {
         )
         .fetch_all(db)
         .await
-        .change_context(Error::Sqlx)
+        .attach_printable("Failed to fetch aliases from database")
     }
 }
 
@@ -188,7 +184,7 @@ impl View {
         system_id: system::Id<Trusted>,
         member_id: member::Id<Trusted>,
         db_pool: &SqlitePool,
-    ) -> error_stack::Result<Id<Trusted>, Error> {
+    ) -> Result<Id<Trusted>, sqlx::Error> {
         debug!(
             "Adding alias for {} (Member ID {}) to database",
             system_id, member_id
@@ -207,7 +203,6 @@ impl View {
         .fetch_one(db_pool)
         .await
         .attach_printable("Error adding alias to database")
-        .change_context(Error::Sqlx)
         .map(|row| Id {
             id: row.id,
             trusted: std::marker::PhantomData,
@@ -219,7 +214,7 @@ impl View {
         &self,
         alias_id: Id<Trusted>,
         db: &SqlitePool,
-    ) -> error_stack::Result<(), Error> {
+    ) -> error_stack::Result<SqliteQueryResult, sqlx::Error> {
         sqlx::query!(
             r#"
             UPDATE aliases
@@ -232,8 +227,6 @@ impl View {
         .execute(db)
         .await
         .attach_printable("Error updating member alias in database")
-        .change_context(Error::Sqlx)
-        .map(|_| ())
     }
 
     pub fn create_add_view(self, member_id: member::Id<Trusted>) -> SlackView {

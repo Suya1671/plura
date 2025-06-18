@@ -199,9 +199,10 @@ impl Trigger {
             let member_id = member::Id::new(member_id);
 
             // Validate the member belongs to the user's system
-            let Ok(member_id) = member_id
+            let Some(member_id) = member_id
                 .validate_by_system(system_id, &user_state.db)
                 .await
+                .change_context(CommandError::Sqlx)?
             else {
                 debug!("Member not found");
                 return Ok(SlackCommandEventResponse::new(

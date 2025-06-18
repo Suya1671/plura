@@ -33,7 +33,7 @@ macro_rules! id {
     ($(#[$attr:meta])* => $name:ident) => {
         #[derive(::sqlx::Type, Debug, PartialEq, Eq, Clone, Copy)]
         $(#[$attr])*
-        pub struct Id<T> {
+        pub struct Id<T: $crate::models::Trustability> {
             pub id: i64,
             trusted: ::std::marker::PhantomData<T>,
         }
@@ -46,7 +46,7 @@ macro_rules! id {
             fn encode_by_ref(
                 &self,
                 buf: &mut <DB as ::sqlx::Database>::ArgumentBuffer<'q>,
-            ) -> Result<::sqlx::encode::IsNull, ::sqlx::error::BoxDynError> {
+            ) -> ::std::result::Result<::sqlx::encode::IsNull, ::sqlx::error::BoxDynError> {
                 <i64 as ::sqlx::Encode<'_, DB>>::encode_by_ref(&self.id, buf)
             }
 
@@ -62,7 +62,7 @@ macro_rules! id {
         {
             fn decode(
                 value: <DB as ::sqlx::Database>::ValueRef<'q>,
-            ) -> Result<Self, ::sqlx::error::BoxDynError> {
+            ) -> ::std::result::Result<Self, ::sqlx::error::BoxDynError> {
                 let id = <i64 as ::sqlx::Decode<'_, DB>>::decode(value)?;
                 Ok(Id {
                     id,

@@ -1,8 +1,9 @@
 use crate::id;
 
 use super::{Trusted, member};
+use error_stack::{Result, ResultExt};
 use slack_morphism::SlackTs;
-use sqlx::{SqlitePool, prelude::*};
+use sqlx::{SqlitePool, prelude::*, sqlite::SqliteQueryResult};
 
 id!(
     /// You cannot create a message id, as it is internal generated-only.
@@ -28,7 +29,7 @@ impl MessageLog {
     pub async fn delete_by_message_id(
         message_id: String,
         db: &SqlitePool,
-    ) -> Result<(), sqlx::Error> {
+    ) -> Result<SqliteQueryResult, sqlx::Error> {
         sqlx::query!(
             r#"
                 DELETE FROM message_logs
@@ -38,7 +39,7 @@ impl MessageLog {
         )
         .execute(db)
         .await
-        .map(|_| ())
+        .attach_printable("Failed to delete message log")
     }
 
     /// Fetches a message log by the slack message ID.
@@ -62,6 +63,7 @@ impl MessageLog {
         )
         .fetch_optional(db)
         .await
+        .attach_printable("Failed to fetch message log")
     }
 
     /// Fetches all message logs by the member ID.
@@ -86,6 +88,7 @@ impl MessageLog {
         )
         .fetch_all(db)
         .await
+        .attach_printable("Failed to fetch message logs")
     }
 
     pub async fn insert(
@@ -108,5 +111,6 @@ impl MessageLog {
         )
         .fetch_one(db)
         .await
+        .attach_printable("Failed to insert message log")
     }
 }
