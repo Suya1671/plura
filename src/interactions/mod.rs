@@ -4,7 +4,6 @@ use std::error::Error;
 use std::sync::Arc;
 
 use axum::Extension;
-use error_stack::ResultExt;
 use member::{create_member, edit_member};
 use slack_morphism::prelude::*;
 use tracing::{debug, error};

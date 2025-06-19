@@ -69,8 +69,8 @@ impl MessageLog {
     /// Fetches all message logs by the member ID.
     #[tracing::instrument(skip(db))]
     pub async fn fetch_all_by_member_id(
-        db: &SqlitePool,
         member_id: member::Id<Trusted>,
+        db: &SqlitePool,
     ) -> Result<Vec<Self>, sqlx::Error> {
         sqlx::query_as!(
             MessageLog,
@@ -91,6 +91,7 @@ impl MessageLog {
         .attach_printable("Failed to fetch message logs")
     }
 
+    #[tracing::instrument(skip(db))]
     pub async fn insert(
         member_id: member::Id<Trusted>,
         message_id: SlackTs,

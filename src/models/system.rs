@@ -25,7 +25,7 @@ id!(
 impl Id<Trusted> {
     #[tracing::instrument(skip(db))]
     pub async fn list_triggers(self, db: &SqlitePool) -> Result<Vec<Trigger>, sqlx::Error> {
-        Trigger::fetch_by_system_id(db, self).await
+        Trigger::fetch_by_system_id(self, db).await
     }
 
     #[tracing::instrument(skip(db))]
@@ -142,6 +142,7 @@ impl System {
         .attach_printable("Error fetching system")
     }
 
+    #[tracing::instrument(skip(db))]
     pub async fn active_member(&self, db: &SqlitePool) -> Result<Option<Member>, sqlx::Error> {
         match self.active_member_id {
             Some(id) => Ok(Some(Member::fetch_by_id(id, db).await?)),

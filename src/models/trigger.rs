@@ -24,6 +24,7 @@ impl Id<Untrusted> {
         }
     }
 
+    #[tracing::instrument(skip(db))]
     pub async fn validate_by_system(
         self,
         system_id: system::Id<Trusted>,
@@ -45,7 +46,8 @@ impl Id<Untrusted> {
 }
 
 impl Id<Trusted> {
-    pub async fn delete(self, db_pool: &SqlitePool) -> Result<SqliteQueryResult, sqlx::Error> {
+    #[tracing::instrument(skip(db))]
+    pub async fn delete(self, db: &SqlitePool) -> Result<SqliteQueryResult, sqlx::Error> {
         sqlx::query!(
             r#"
                 DELETE FROM triggers
@@ -53,7 +55,7 @@ impl Id<Trusted> {
             "#,
             self.id
         )
-        .execute(db_pool)
+        .execute(db)
         .await
         .attach_printable("Error deleting trigger")
     }
@@ -137,9 +139,10 @@ impl Trigger {
         .attach_printable("Error fetching trigger")
     }
 
+    #[tracing::instrument(skip(db))]
     pub async fn fetch_by_system_id(
-        db: &SqlitePool,
         system_id: system::Id<Trusted>,
+        db: &SqlitePool,
     ) -> Result<Vec<Self>, sqlx::Error> {
         sqlx::query_as!(
             Trigger,
@@ -162,9 +165,10 @@ impl Trigger {
         .attach_printable("Error fetching triggers")
     }
 
+    #[tracing::instrument(skip(db))]
     pub async fn fetch_by_member_id(
-        db: &SqlitePool,
         member_id: member::Id<Trusted>,
+        db: &SqlitePool,
     ) -> error_stack::Result<Vec<Self>, sqlx::Error> {
         sqlx::query_as!(
             Trigger,
@@ -248,11 +252,12 @@ impl View {
     /// Add a trigger to the database
     ///
     /// Returns the id of the new trigger
+    #[tracing::instrument(skip(db))]
     pub async fn add(
         &self,
         system_id: system::Id<Trusted>,
         member_id: member::Id<Trusted>,
-        db_pool: &SqlitePool,
+        db: &SqlitePool,
     ) -> error_stack::Result<Id<Trusted>, Error> {
         debug!(
             "Adding trigger for {} (Member ID {}) to database",
@@ -270,7 +275,7 @@ impl View {
             self.text,
             self.typ
         )
-        .fetch_one(db_pool)
+        .fetch_one(db)
         .await
         .attach_printable("Error adding trigger to database")
         .change_context(Error::Sqlx)
@@ -281,6 +286,7 @@ impl View {
     }
 
     /// Update a trigger in the database to match this view
+    #[tracing::instrument(skip(db))]
     pub async fn update(
         &self,
         trigger_id: Id<Trusted>,

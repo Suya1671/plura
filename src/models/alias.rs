@@ -1,10 +1,8 @@
 use crate::id;
 
-use super::{Trustability, Trusted, Untrusted, member, system};
+use super::{Trusted, Untrusted, member, system};
 use error_stack::{Result, ResultExt};
-use slack_morphism::prelude::*;
 use sqlx::{SqlitePool, prelude::*, sqlite::SqliteQueryResult};
-use tracing::{debug, warn};
 
 id!(
     /// For an ID to be trusted, it must
@@ -15,13 +13,7 @@ id!(
 );
 
 impl Id<Untrusted> {
-    pub const fn new(id: i64) -> Self {
-        Self {
-            id,
-            trusted: std::marker::PhantomData,
-        }
-    }
-
+    #[tracing::instrument(skip(db))]
     pub async fn validate_by_system(
         self,
         system_id: system::Id<Trusted>,
@@ -43,7 +35,8 @@ impl Id<Untrusted> {
 }
 
 impl Id<Trusted> {
-    pub async fn delete(self, db_pool: &SqlitePool) -> Result<SqliteQueryResult, sqlx::Error> {
+    #[tracing::instrument(skip(db))]
+    pub async fn delete(self, db: &SqlitePool) -> Result<SqliteQueryResult, sqlx::Error> {
         sqlx::query!(
             r#"
                 DELETE FROM aliases
@@ -51,15 +44,16 @@ impl Id<Trusted> {
             "#,
             self.id
         )
-        .execute(db_pool)
+        .execute(db)
         .await
         .attach_printable("Failed to delete alias from database")
     }
 
+    #[tracing::instrument(skip(db))]
     pub async fn change_alias(
         self,
-        db_pool: &SqlitePool,
         new_alias: String,
+        db: &SqlitePool,
     ) -> Result<SqliteQueryResult, sqlx::Error> {
         sqlx::query!(
             r#"
@@ -70,16 +64,10 @@ impl Id<Trusted> {
             self.id,
             new_alias
         )
-        .execute(db_pool)
+        .execute(db)
         .await
         .attach_printable("Failed to change alias in database")
     }
-}
-
-#[derive(thiserror::Error, displaydoc::Display, Debug)]
-pub enum Error {
-    /// Error while calling the database
-    Sqlx,
 }
 
 #[derive(FromRow, Debug)]
@@ -88,36 +76,15 @@ pub struct Alias {
     pub id: Id<Trusted>,
     pub member_id: member::Id<Trusted>,
     pub system_id: system::Id<Trusted>,
+    #[allow(clippy::struct_field_names)]
     pub alias: String,
 }
 
 impl Alias {
-    pub async fn fetch_by_id<T>(id: Id<T>, db: &SqlitePool) -> Result<Option<Self>, sqlx::Error>
-    where
-        T: Trustability,
-    {
-        sqlx::query_as!(
-            Alias,
-            r#"
-            SELECT
-                id as "id: Id<Trusted>",
-                member_id as "member_id: member::Id<Trusted>",
-                system_id as "system_id: system::Id<Trusted>",
-                alias
-            FROM
-                aliases
-            WHERE id = $1
-            "#,
-            id.id,
-        )
-        .fetch_optional(db)
-        .await
-        .attach_printable("Failed to fetch alias from database")
-    }
-
+    #[tracing::instrument(skip(db))]
     pub async fn fetch_by_system_id(
-        db: &SqlitePool,
         system_id: system::Id<Trusted>,
+        db: &SqlitePool,
     ) -> Result<Vec<Self>, sqlx::Error> {
         sqlx::query_as!(
             Alias,
@@ -139,9 +106,10 @@ impl Alias {
         .attach_printable("Failed to fetch aliases from database")
     }
 
+    #[tracing::instrument(skip(db))]
     pub async fn fetch_by_member_id(
-        db: &SqlitePool,
         member_id: member::Id<Trusted>,
+        db: &SqlitePool,
     ) -> error_stack::Result<Vec<Self>, sqlx::Error> {
         sqlx::query_as!(
             Self,
@@ -162,11 +130,12 @@ impl Alias {
         .attach_printable("Failed to fetch aliases from database")
     }
 
+    #[tracing::instrument(skip(db))]
     pub async fn insert(
-        db: &SqlitePool,
         member_id: member::Id<Trusted>,
         system_id: system::Id<Trusted>,
         alias: String,
+        db: &SqlitePool,
     ) -> error_stack::Result<Self, sqlx::Error> {
         sqlx::query_as!(
             Self,

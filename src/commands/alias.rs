@@ -37,8 +37,6 @@ pub enum Alias {
 
 #[derive(thiserror::Error, displaydoc::Display, Debug)]
 pub enum CommandError {
-    /// Error while calling the Slack API
-    Slack,
     /// Error while calling the database
     Sqlx,
 }
@@ -67,6 +65,7 @@ impl Alias {
         member: MemberRef,
         alias: String,
     ) -> Result<SlackCommandEventResponse, CommandError> {
+        debug!("Creating alias");
         let states = state.read().await;
         let user_state = states.get_user_state::<user::State>().unwrap();
 
@@ -74,7 +73,7 @@ impl Alias {
 
         fetch_member!(member, user_state, system_id => member_id);
 
-        if alias.parse::<i64>().is_err() {
+        if alias.parse::<i64>().is_ok() {
             return Ok(SlackCommandEventResponse::new(
                 SlackMessageContent::new().with_text(
                     "Alias cannot be a valid integer, as it could be mistaken for a member ID."
@@ -83,7 +82,7 @@ impl Alias {
             ));
         }
 
-        models::Alias::insert(&user_state.db, member_id, system_id, alias)
+        models::Alias::insert(member_id, system_id, alias, &user_state.db)
             .await
             .change_context(CommandError::Sqlx)?;
 
@@ -98,6 +97,7 @@ impl Alias {
         state: &SlackClientEventsUserState,
         alias: alias::Id<Untrusted>,
     ) -> Result<SlackCommandEventResponse, CommandError> {
+        debug!("Deleting alias");
         let states = state.read().await;
         let user_state = states.get_user_state::<user::State>().unwrap();
 
@@ -129,6 +129,7 @@ impl Alias {
         state: &SlackClientEventsUserState,
         member: Option<MemberRef>,
     ) -> Result<SlackCommandEventResponse, CommandError> {
+        debug!("Listing aliases");
         let states = state.read().await;
         let user_state = states.get_user_state::<user::State>().unwrap();
 
@@ -138,11 +139,11 @@ impl Alias {
             debug!("Fetching aliases by member");
             fetch_member!(member, user_state, system_id => member_id);
 
-            models::Alias::fetch_by_member_id(&user_state.db, member_id)
+            models::Alias::fetch_by_member_id(member_id, &user_state.db)
                 .await
                 .change_context(CommandError::Sqlx)?
         } else {
-            models::Alias::fetch_by_system_id(&user_state.db, system_id)
+            models::Alias::fetch_by_system_id(system_id, &user_state.db)
                 .await
                 .change_context(CommandError::Sqlx)?
         };
@@ -165,7 +166,7 @@ impl Alias {
                 ];
 
                 SlackSectionBlock::new()
-                    .with_text(md!("**Alias {}**", alias.id))
+                    .with_text(md!("*Alias {}*", alias.id))
                     .with_fields(fields)
             })
             .map(Into::into)
@@ -183,6 +184,7 @@ impl Alias {
         alias: alias::Id<Untrusted>,
         new_alias: String,
     ) -> Result<SlackCommandEventResponse, CommandError> {
+        debug!("Editing alias");
         let states = state.read().await;
         let user_state = states.get_user_state::<user::State>().unwrap();
 
@@ -199,7 +201,7 @@ impl Alias {
         };
 
         alias
-            .change_alias(&user_state.db, new_alias)
+            .change_alias(new_alias, &user_state.db)
             .await
             .change_context(CommandError::Sqlx)?;
 

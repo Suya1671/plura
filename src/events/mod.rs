@@ -52,7 +52,9 @@ pub async fn process_push_event(
         SlackPushEvent::EventCallback(event) => {
             let client = environment.client.clone();
             let state = environment.user_state.clone();
-            if let Err(e) = push_event_callback(event, client, state).await {
+            // https://rust-lang.github.io/rust-clippy/master/index.html#large_futures
+            // Into the box you go
+            if let Err(e) = Box::pin(push_event_callback(event, client, state)).await {
                 error!("Error processing push event: {:#?}", e);
             }
 

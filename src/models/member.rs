@@ -13,14 +13,6 @@ use super::{
     user,
 };
 
-#[derive(thiserror::Error, displaydoc::Display, Debug)]
-pub enum Error {
-    /// Error while calling the database
-    Database,
-    /// A field was missing from the view
-    MissingField(String),
-}
-
 id!(
     /// For an ID to be trusted, it must
     ///
@@ -37,6 +29,7 @@ impl Id<Untrusted> {
         }
     }
 
+    #[tracing::instrument(skip(db))]
     pub async fn validate_by_system(
         self,
         system_id: system::Id<Trusted>,
@@ -56,6 +49,7 @@ impl Id<Untrusted> {
         .map(|res| res.map(|res| res.id))
     }
 
+    #[tracing::instrument(skip(db))]
     pub async fn validate_by_user(
         self,
         user_id: &user::Id<Trusted>,
@@ -78,6 +72,7 @@ impl Id<Untrusted> {
         .map(|res| res.map(|res| res.id))
     }
 
+    #[tracing::instrument(skip(db))]
     pub async fn fetch_by_alias(
         alias: &str,
         system_id: system::Id<Trusted>,
@@ -99,12 +94,13 @@ impl Id<Untrusted> {
 }
 
 impl Id<Trusted> {
+    #[tracing::instrument(skip(db))]
     pub async fn fetch_triggers(self, db: &SqlitePool) -> Result<Vec<Trigger>, sqlx::Error> {
-        Trigger::fetch_by_member_id(db, self).await
+        Trigger::fetch_by_member_id(self, db).await
     }
 }
 
-#[derive(Debug, Clone, derive_more::From)]
+#[derive(Debug, Clone)]
 /// An untrusted member reference from an external source
 pub enum MemberRef {
     Id(Id<Untrusted>),
@@ -124,17 +120,18 @@ impl FromStr for MemberRef {
 }
 
 impl MemberRef {
+    #[tracing::instrument(skip(db))]
     pub async fn validate_by_system(
         &self,
         system_id: system::Id<Trusted>,
         db: &SqlitePool,
     ) -> Result<Option<Id<Trusted>>, sqlx::Error> {
         match self {
-            MemberRef::Id(id) => id
+            Self::Id(id) => id
                 .validate_by_system(system_id, db)
                 .await
                 .attach_printable("Failed to validate member reference via id and system"),
-            MemberRef::Alias(alias) => Id::fetch_by_alias(alias, system_id, db)
+            Self::Alias(alias) => Id::fetch_by_alias(alias, system_id, db)
                 .await
                 .attach_printable("Failed to validate member reference via alias and system"),
         }
@@ -162,38 +159,8 @@ pub struct Member {
 }
 
 impl Member {
-    pub async fn fetch_by_and_trust_id(
-        system_id: system::Id<Trusted>,
-        member_id: Id<Untrusted>,
-        db: &SqlitePool,
-    ) -> Result<Option<Self>, sqlx::Error> {
-        sqlx::query_as!(
-            Member,
-            r#"
-            SELECT
-                id as "id: Id<Trusted>",
-                system_id as "system_id: system::Id<Trusted>",
-                full_name,
-                display_name,
-                profile_picture_url,
-                title,
-                pronouns,
-                name_pronunciation,
-                name_recording_url,
-                created_at as "created_at: time::PrimitiveDateTime"
-            FROM members
-            WHERE system_id = $1 AND id = $2
-            "#,
-            system_id,
-            // Safe because this query also checks if the ID is trusted
-            member_id.id
-        )
-        .fetch_optional(db)
-        .await
-        .attach_printable("Failed to fetch member by id and trust by system")
-    }
-
     /// Fetch a member by their id
+    #[tracing::instrument(skip(db))]
     pub async fn fetch_by_id(member_id: Id<Trusted>, db: &SqlitePool) -> Result<Self, sqlx::Error> {
         sqlx::query_as!(
             Member,
@@ -210,7 +177,7 @@ impl Member {
                 name_recording_url,
                 created_at as "created_at: time::PrimitiveDateTime"
             FROM members
-            WHERE id = $2
+            WHERE id = $1
             "#,
             member_id
         )
@@ -247,7 +214,7 @@ impl From<Member> for TriggeredMember {
     }
 }
 
-#[derive(Default, Clone)]
+#[derive(Debug, Default, Clone)]
 pub struct View {
     pub full_name: String,
     pub display_name: String,
@@ -351,6 +318,7 @@ impl View {
     /// Add a member to the database
     ///
     /// Returns the id of the new member
+    #[tracing::instrument(skip(db))]
     pub async fn add(
         &self,
         system_id: system::Id<Trusted>,
@@ -380,6 +348,7 @@ impl View {
     /// Update a member in the database to match this view
     ///
     /// Returns None if the member does not exist
+    #[tracing::instrument(skip(db))]
     pub async fn update(
         &self,
         member_id: Id<Trusted>,
@@ -403,8 +372,12 @@ impl View {
     }
 }
 
+#[derive(thiserror::Error, displaydoc::Display, Debug)]
+/// A field was missing from the view
+pub struct MissingFieldError(String);
+
 impl TryFrom<SlackViewState> for View {
-    type Error = Error;
+    type Error = MissingFieldError;
 
     fn try_from(value: SlackViewState) -> std::result::Result<Self, Self::Error> {
         let mut view = Self::default();
@@ -414,12 +387,12 @@ impl TryFrom<SlackViewState> for View {
                     "full_name" => {
                         view.full_name = content
                             .value
-                            .ok_or_else(|| Error::MissingField("display_name".to_string()))?;
+                            .ok_or_else(|| MissingFieldError("display_name".to_string()))?;
                     }
                     "display_name" => {
                         view.display_name = content
                             .value
-                            .ok_or_else(|| Error::MissingField("display_name".to_string()))?;
+                            .ok_or_else(|| MissingFieldError("display_name".to_string()))?;
                     }
                     "profile_picture_url" => view.profile_picture_url = content.value,
                     "title" => view.title = content.value,
@@ -434,11 +407,11 @@ impl TryFrom<SlackViewState> for View {
         }
 
         if view.full_name.is_empty() {
-            return Err(Error::MissingField("full_name".to_string()));
+            return Err(MissingFieldError("full_name".to_string()));
         }
 
         if view.display_name.is_empty() {
-            return Err(Error::MissingField("display_name".to_string()));
+            return Err(MissingFieldError("display_name".to_string()));
         }
 
         Ok(view)

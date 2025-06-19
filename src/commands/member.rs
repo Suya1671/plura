@@ -101,7 +101,6 @@ impl Member {
         let user_state = states.get_user_state::<user::State>().unwrap();
 
         fetch_system!(event, user_state => system_id);
-        debug!("Found user system");
 
         let new_active_member_id = if base {
             None
@@ -189,8 +188,8 @@ impl Member {
             .into_iter()
             .map(|member| {
                 let fields = [
-                    Some(md!("Display Name: {}", member.display_name)),
                     Some(md!("Member ID: {}", member.id)),
+                    Some(md!("Display Name: {}", member.display_name)),
                     member.title.as_ref().map(|title| md!("Title: {}", title)),
                     member
                         .pronouns
@@ -239,12 +238,11 @@ impl Member {
             .await
             .change_context(CommandError::Sqlx)?;
 
-        fields!(member_id = %member.id);
         debug!("Member found");
 
         let fields = [
-            Some(md!("Display Name: {}", member.display_name)),
             Some(md!("Member ID: {}", member.id)),
+            Some(md!("Display Name: {}", member.display_name)),
             member.title.as_ref().map(|title| md!("Title: {}", title)),
             member
                 .pronouns
