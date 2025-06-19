@@ -38,6 +38,17 @@ macro_rules! id {
             trusted: ::std::marker::PhantomData<T>,
         }
 
+        impl ::std::str::FromStr for Id<$crate::models::Untrusted> {
+            type Err = ::std::num::ParseIntError;
+
+            fn from_str(s: &str) -> ::std::result::Result<Self, Self::Err> {
+                Ok(Id {
+                    id: s.parse()?,
+                    trusted: ::std::marker::PhantomData,
+                })
+            }
+        }
+
         impl<'q, DB> Encode<'q, DB> for Id<$crate::models::Trusted>
         where
             DB: ::sqlx::Database,

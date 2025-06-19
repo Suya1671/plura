@@ -186,13 +186,9 @@ async fn handle_message(
     // No triggers ran, so check if there's any actively fronting member
     if let Some(member_id) = system.active_member_id {
         fields!(member = %&member_id);
-        let Some(member) = models::Member::fetch_by_id(member_id, &user_state.db)
+        let member = models::Member::fetch_by_id(member_id, &user_state.db)
             .await
-            .change_context(PushEventError::MemberFetch)?
-        else {
-            error!("Active member not found. This should not happen.");
-            return Ok(());
-        };
+            .change_context(PushEventError::MemberFetch)?;
         fields!(member = ?&member);
 
         rewrite_message(

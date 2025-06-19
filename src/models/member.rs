@@ -1,3 +1,5 @@
+use std::{convert::Infallible, str::FromStr};
+
 use error_stack::{Result, ResultExt};
 use slack_morphism::prelude::*;
 use sqlx::{SqlitePool, prelude::*, sqlite::SqliteQueryResult};
@@ -102,12 +104,23 @@ impl Id<Trusted> {
     }
 }
 
-#[derive(Debug, derive_more::From)]
+#[derive(Debug, Clone, derive_more::From)]
 /// An untrusted member reference from an external source
 pub enum MemberRef {
     Id(Id<Untrusted>),
     /// We were given a [`super::Alias`]
     Alias(String),
+}
+
+impl FromStr for MemberRef {
+    type Err = Infallible;
+
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        s.parse::<i64>().map_or_else(
+            |_| Ok(Self::Alias(s.to_string())),
+            |id| Ok(Self::Id(Id::new(id))),
+        )
+    }
 }
 
 impl MemberRef {
@@ -181,10 +194,7 @@ impl Member {
     }
 
     /// Fetch a member by their id
-    pub async fn fetch_by_id(
-        member_id: Id<Trusted>,
-        db: &SqlitePool,
-    ) -> Result<Option<Self>, sqlx::Error> {
+    pub async fn fetch_by_id(member_id: Id<Trusted>, db: &SqlitePool) -> Result<Self, sqlx::Error> {
         sqlx::query_as!(
             Member,
             r#"
@@ -204,7 +214,7 @@ impl Member {
             "#,
             member_id
         )
-        .fetch_optional(db)
+        .fetch_one(db)
         .await
         .attach_printable("Failed to fetch member by id")
     }

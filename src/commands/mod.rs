@@ -1,9 +1,11 @@
 use std::sync::Arc;
 
+mod alias;
 mod member;
 mod system;
 mod trigger;
 
+use alias::Alias;
 use axum::{Extension, Json};
 use clap::{Parser, error::ErrorKind};
 use error_stack::ResultExt;
@@ -25,6 +27,8 @@ enum Command {
     System(System),
     #[clap(subcommand)]
     Triggers(Trigger),
+    #[clap(subcommand)]
+    Aliases(Alias),
 }
 
 impl Command {
@@ -48,6 +52,10 @@ impl Command {
                 .run(event, client, state)
                 .await
                 .change_context(CommandError::Triggers),
+            Self::Aliases(aliases) => aliases
+                .run(event, state)
+                .await
+                .change_context(CommandError::Aliases),
         }
     }
 }
@@ -60,6 +68,8 @@ enum CommandError {
     Triggers,
     /// Error running the system command
     System,
+    /// Error running the aliases command
+    Aliases,
 }
 
 // TO-DO: figure out error handling
