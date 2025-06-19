@@ -78,7 +78,7 @@ async fn push_event_callback(
                 .as_ref()
                 .is_some_and(|subtype| *subtype == SlackMessageEventType::MessageDeleted) =>
         {
-            fields!(event_type = ?SlackMessageEventType::MessageDeleted);
+            fields!(event_type = ?SlackMessageEventType::MessageDeleted, message_id = ?&message_event.deleted_ts, user = ?message_event.sender);
             let states = state.read().await;
             let user_state = states.get_user_state::<user::State>().unwrap();
 
@@ -89,6 +89,10 @@ async fn push_event_callback(
             .await
             .change_context(PushEventError::SlackApi)
             .attach_printable("Failed to delete message log")
+            .map(|_| ())?;
+
+            debug!("Message log deleted");
+            Ok(())
         }
         SlackEventCallbackBody::Message(message_event)
             if message_event.subtype.is_none()

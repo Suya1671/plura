@@ -12,25 +12,25 @@
 #[macro_export]
 macro_rules! fields {
     // recursive cases
-    ($name:tt = %$value:expr, $($rest:tt)?) => {
+    ($name:tt = %$value:expr, $($rest:tt)*) => {
             ::tracing::span::Span::current()
                 .record(::std::stringify!($name), ::tracing::field::display($value));
 
-            fields!($($rest)+);
+            fields!($($rest)*);
     };
 
-    ($name:tt = ?$value:expr, $($rest:tt)?) => {
+    ($name:tt = ?$value:expr, $($rest:tt)*) => {
             ::tracing::span::Span::current()
                 .record(::std::stringify!($name), ::tracing::field::debug($value));
 
-            fields!($($rest)+);
+            fields!($($rest)*);
     };
 
-    ($name:tt = $value:expr, $($rest:tt)?) => {
+    ($name:tt = $value:expr, $($rest:tt)*) => {
             ::tracing::span::Span::current()
                 .record(::std::stringify!($name), $value);
 
-            fields!($($rest)+);
+            fields!($($rest)*);
     };
 
     // base cases
@@ -48,4 +48,7 @@ macro_rules! fields {
             ::tracing::span::Span::current()
                 .record(::std::stringify!($name), $value);
     };
+
+    // end
+    () => {}
 }
