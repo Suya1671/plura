@@ -196,6 +196,7 @@ impl System {
         db: &SqlitePool,
         message: &str,
     ) -> Result<Option<TriggeredMember>, sqlx::Error> {
+        debug!(message, "Fetching triggered member");
         sqlx::query_as!(
             TriggeredMember,
             r#"
@@ -211,8 +212,8 @@ impl System {
                     triggers ON members.id = triggers.member_id
                 WHERE
                     -- See trigger.rs file for all types and names
-                    (triggers.typ = 0 AND ?1 LIKE triggers.text || '%') OR
-                    (triggers.typ = 1 AND ?1 LIKE '%' || triggers.text)
+                    (triggers.typ = 0 AND $1 LIKE '%' || triggers.text) OR
+                    (triggers.typ = 1 AND $1 LIKE triggers.text || '%')
             "#,
             message
         )
