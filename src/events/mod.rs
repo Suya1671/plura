@@ -109,7 +109,7 @@ async fn push_event_callback(
     }
 }
 
-#[tracing::instrument(skip_all)]
+#[tracing::instrument(skip(client, state))]
 async fn handle_message(
     message_event: SlackMessageEvent,
     client: &SlackHyperClient,
@@ -156,6 +156,7 @@ async fn handle_message(
             .await
             .change_context(PushEventError::MemberFetch)?
         else {
+            debug!("Member not triggered");
             return Ok(());
         };
 

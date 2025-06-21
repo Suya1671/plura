@@ -1,5 +1,4 @@
 mod member;
-mod trigger;
 use std::error::Error;
 use std::sync::Arc;
 
@@ -8,10 +7,8 @@ use error_stack::Report;
 use member::{create_member, edit_member};
 use slack_morphism::prelude::*;
 use tracing::{debug, error};
-use trigger::{create_trigger, edit_trigger};
 
 use crate::BOT_TOKEN;
-use crate::models::system::System;
 use crate::models::{self, Trusted, user};
 
 #[tracing::instrument(skip(event, environment))]
@@ -139,84 +136,6 @@ async fn handle_modal_view(
             .await
             {
                 handle_user_error(error, user_id.into(), client).await;
-            }
-        }
-        Some(id) if id.starts_with("create_trigger_") => {
-            debug!("Creating trigger");
-
-            let member_id = id
-                .strip_prefix("create_trigger_")
-                .expect("Failed to parse member id from external id")
-                .parse::<i64>()
-                .map(models::member::Id::new)
-                .expect("Failed to parse member id from external id");
-
-            // TO-DO: Better handling of Err case
-            let Ok(Some(trusted_member_id)) =
-                member_id.validate_by_user(&user_id, &user_state.db).await
-            else {
-                error!(
-                    id,
-                    "Failed to validate member id from external id. Bailing in case this was a malicious call",
-                );
-                return;
-            };
-
-            if let Err(error) = create_trigger(
-                view_state,
-                &client,
-                user_state,
-                user_id.clone(),
-                trusted_member_id,
-            )
-            .await
-            {
-                handle_user_error(error, user_id.into(), client).await;
-            };
-        }
-        Some(id) if id.starts_with("edit_trigger_") => {
-            debug!("Editing trigger");
-
-            let trigger_id = id
-                .strip_prefix("edit_trigger_")
-                .expect("Failed to parse member id from external id")
-                .parse::<i64>()
-                .map(models::trigger::Id::new)
-                .expect("Failed to parse member id from external id");
-
-            let Some(system) = System::fetch_by_user_id(&user_state.db, &user_id)
-                .await
-                .ok()
-                .flatten()
-            else {
-                error!(
-                    %user_id,
-                    "Failed to fetch system id for user id. Bailing in case this was a malicious call"
-                );
-                return;
-            };
-
-            let Ok(trusted_trigger_id) = trigger_id
-                .validate_by_system(system.id, &user_state.db)
-                .await
-            else {
-                error!(
-                    "Failed to validate member id from external id {}. Bailing in case this was a malicious call",
-                    id
-                );
-                return;
-            };
-
-            if let Err(error) = edit_trigger(
-                view_state,
-                &client,
-                user_state,
-                user_id.clone(),
-                trusted_trigger_id,
-            )
-            .await
-            {
-                handle_user_error(error, user_id.into(), client.clone()).await;
             }
         }
         Some(id) => {

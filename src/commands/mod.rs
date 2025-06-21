@@ -49,7 +49,7 @@ impl Command {
                 .await
                 .change_context(CommandError::System),
             Self::Triggers(triggers) => triggers
-                .run(event, client, state)
+                .run(event, state)
                 .await
                 .change_context(CommandError::Triggers),
             Self::Aliases(aliases) => aliases
