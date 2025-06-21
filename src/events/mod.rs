@@ -85,7 +85,7 @@ async fn push_event_callback(
             let user_state = states.get_user_state::<user::State>().unwrap();
 
             models::MessageLog::delete_by_message_id(
-                message_event.deleted_ts.unwrap().0,
+                &message_event.deleted_ts.unwrap(),
                 &user_state.db,
             )
             .await
@@ -303,7 +303,7 @@ async fn rewrite_message(
         .await
         .change_context(RewriteMessageError::PostMessage)?;
 
-    models::MessageLog::insert(member.id, res.ts, db)
+    models::MessageLog::insert(member.id, &res.ts, db)
         .await
         .change_context(RewriteMessageError::MessageLog)?;
 

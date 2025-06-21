@@ -27,7 +27,7 @@ pub struct MessageLog {
 impl MessageLog {
     /// Deletes a message log by the message ID.
     pub async fn delete_by_message_id(
-        message_id: String,
+        message_id: &SlackTs,
         db: &SqlitePool,
     ) -> Result<SqliteQueryResult, sqlx::Error> {
         sqlx::query!(
@@ -35,7 +35,7 @@ impl MessageLog {
                 DELETE FROM message_logs
                 WHERE message_id = $1
             "#,
-            message_id
+            message_id.0
         )
         .execute(db)
         .await
@@ -45,7 +45,7 @@ impl MessageLog {
     /// Fetches a message log by the slack message ID.
     #[tracing::instrument(skip(db))]
     pub async fn fetch_by_message_id(
-        id: String,
+        id: &SlackTs,
         db: &SqlitePool,
     ) -> Result<Option<Self>, sqlx::Error> {
         sqlx::query_as!(
@@ -59,7 +59,7 @@ impl MessageLog {
                 message_logs
             WHERE message_id = $1
             "#,
-            id,
+            id.0,
         )
         .fetch_optional(db)
         .await
@@ -94,7 +94,7 @@ impl MessageLog {
     #[tracing::instrument(skip(db))]
     pub async fn insert(
         member_id: member::Id<Trusted>,
-        message_id: SlackTs,
+        message_id: &SlackTs,
         db: &SqlitePool,
     ) -> Result<Self, sqlx::Error> {
         sqlx::query_as!(

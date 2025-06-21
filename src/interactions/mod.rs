@@ -1,4 +1,5 @@
 mod member;
+mod message;
 use std::error::Error;
 use std::sync::Arc;
 
@@ -6,10 +7,10 @@ use axum::Extension;
 use error_stack::Report;
 use member::{create_member, edit_member};
 use slack_morphism::prelude::*;
-use tracing::{debug, error};
+use tracing::{debug, error, warn};
 
-use crate::BOT_TOKEN;
 use crate::models::{self, Trusted, user};
+use crate::{BOT_TOKEN, fields};
 
 #[tracing::instrument(skip(event, environment))]
 pub async fn process_interaction_event(
@@ -34,9 +35,20 @@ async fn interaction_event(
         SlackInteractionEvent::ViewSubmission(slack_interaction_view_submission_event) => {
             handle_view_submission(slack_interaction_view_submission_event, client, states).await
         }
-        SlackInteractionEvent::Shortcut(shortcut) => {
-            debug!(?shortcut, "Received shortcut event");
-            todo!()
+        SlackInteractionEvent::MessageAction(message_event) => {
+            debug!(?message_event, "Received message action event");
+            match &*message_event.callback_id.0 {
+                "edit_message" => {
+                    message::start_edit(
+                        message_event,
+                        client,
+                        states.read().await.get_user_state().unwrap(),
+                    )
+                    .await?;
+                }
+                id => warn!(id, "Unknown message action callback ID"),
+            }
+            Ok(())
         }
         event => {
             debug!(?event, "Received interaction event",);
@@ -84,6 +96,8 @@ async fn handle_modal_view(
     let user_state = states.get_user_state::<user::State>().unwrap();
     let external_id = view.external_id.as_deref();
 
+    fields!(external_id = ?&external_id);
+
     match external_id {
         None => {
             error!(
@@ -97,6 +111,28 @@ async fn handle_modal_view(
                 create_member(view_state, &client, user_state, user_id.clone()).await
             {
                 handle_user_error(error, user_id.into(), client).await;
+            }
+        }
+        Some(id) if id.starts_with("edit_message_") => {
+            debug!("Received edit message modal view");
+
+            let stripped = id.strip_prefix("edit_message_").unwrap();
+
+            let (message_id, channel_id) = stripped.split_once('_').unwrap();
+            let message_id = SlackTs::new(message_id.to_owned());
+            let channel_id = SlackChannelId::new(channel_id.to_owned());
+
+            if let Err(e) = message::edit(
+                view_state,
+                &client,
+                user_state,
+                user_id.clone().into(),
+                message_id,
+                channel_id,
+            )
+            .await
+            {
+                handle_user_error(e, user_id.into(), client).await;
             }
         }
         Some(id) if id.starts_with("edit_member_") => {

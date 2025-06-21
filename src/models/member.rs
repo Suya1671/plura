@@ -98,6 +98,11 @@ impl Id<Trusted> {
     pub async fn fetch_triggers(self, db: &SqlitePool) -> Result<Vec<Trigger>, sqlx::Error> {
         Trigger::fetch_by_member_id(self, db).await
     }
+
+    #[tracing::instrument(skip(db))]
+    pub async fn fetch(self, db: &SqlitePool) -> Result<Member, sqlx::Error> {
+        Member::fetch_by_id(self, db).await
+    }
 }
 
 #[derive(Debug, Clone)]

@@ -79,6 +79,29 @@ impl Id<Trusted> {
 
         Ok(new_active_member)
     }
+
+    #[tracing::instrument(skip(db))]
+    pub async fn fetch(self, db: &SqlitePool) -> Result<System, sqlx::Error> {
+        sqlx::query_as!(
+            System,
+            r#"
+            SELECT
+                id as "id: Id<Trusted>",
+                owner_id as "owner_id: user::Id<Trusted>",
+                active_member_id as "active_member_id: member::Id<Trusted>",
+                trigger_changes_active_member,
+                slack_oauth_token,
+                name,
+                created_at as "created_at: time::PrimitiveDateTime"
+            FROM systems
+            WHERE id = $1
+            "#,
+            self.id
+        )
+        .fetch_one(db)
+        .await
+        .attach_printable("Failed to fetch system from id")
+    }
 }
 
 #[derive(Debug, FromRow, PartialEq, Eq, Clone)]
@@ -122,18 +145,18 @@ impl System {
         sqlx::query_as!(
             System,
             r#"
-        SELECT
-            id as "id: Id<Trusted>",
-            owner_id as "owner_id: user::Id<Trusted>",
-            active_member_id as "active_member_id: member::Id<Trusted>",
-            trigger_changes_active_member,
-            slack_oauth_token,
-            name,
-            created_at as "created_at: time::PrimitiveDateTime"
-        FROM
-            systems
-        WHERE owner_id = $1
-        "#,
+            SELECT
+                id as "id: Id<Trusted>",
+                owner_id as "owner_id: user::Id<Trusted>",
+                active_member_id as "active_member_id: member::Id<Trusted>",
+                trigger_changes_active_member,
+                slack_oauth_token,
+                name,
+                created_at as "created_at: time::PrimitiveDateTime"
+            FROM
+                systems
+            WHERE owner_id = $1
+            "#,
             // This is safe, as this function effectively checks if the user is trusted before fetching the system
             user_id.id
         )
