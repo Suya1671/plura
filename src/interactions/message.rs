@@ -112,29 +112,9 @@ pub async fn edit(
         .await
         .change_context(Error::Sqlx)?
     else {
-        debug!(
-            "Message not found in database. User is trying to edit a message that isn't sent by us. Send an error back"
+        warn!(
+            "Message not found in database. User is trying to edit a message that isn't sent by us. Bailing since this shouldn't happen"
         );
-
-        let conversation = session
-            .conversations_open(
-                &SlackApiConversationsOpenRequest::new().with_users(vec![user_id.clone()]),
-            )
-            .await
-            .change_context(Error::Slack)?
-            .channel;
-
-        session
-            .chat_post_ephemeral(&SlackApiChatPostEphemeralRequest::new(
-                conversation.id,
-                user_id.clone(),
-                SlackMessageContent::new().with_text(
-                    "This message was not sent by a member! Did you maybe want to reproxy instead?"
-                        .into(),
-                ),
-            ))
-            .await
-            .change_context(Error::Slack)?;
 
         return Ok(());
     };
@@ -150,24 +130,7 @@ pub async fn edit(
         .change_context(Error::Sqlx)?;
 
     if system.owner_id != user_id {
-        debug!("User is not the owner of the system");
-
-        let conversation = session
-            .conversations_open(
-                &SlackApiConversationsOpenRequest::new().with_users(vec![user_id.clone()]),
-            )
-            .await
-            .change_context(Error::Slack)?
-            .channel;
-
-        session
-            .chat_post_ephemeral(&SlackApiChatPostEphemeralRequest::new(
-                conversation.id,
-                user_id.clone(),
-                SlackMessageContent::new().with_text("This message was not sent by you!".into()),
-            ))
-            .await
-            .change_context(Error::Slack)?;
+        warn!("User is not the owner of the system. This shouldn't happen. Bailing");
 
         return Ok(());
     }
