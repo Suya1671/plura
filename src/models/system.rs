@@ -136,8 +136,8 @@ pub struct System {
 impl System {
     #[tracing::instrument(skip(db))]
     pub async fn fetch_by_user_id<T>(
-        db: &SqlitePool,
         user_id: &user::Id<T>,
+        db: &SqlitePool,
     ) -> Result<Option<Self>, sqlx::Error>
     where
         T: Trustability,
@@ -188,7 +188,7 @@ impl System {
         Ok(new_active_member)
     }
 
-    pub async fn get_members(&self, db: &SqlitePool) -> Result<Vec<Member>, sqlx::Error> {
+    pub async fn members(&self, db: &SqlitePool) -> Result<Vec<Member>, sqlx::Error> {
         sqlx::query_as!(
             Member,
             r#"

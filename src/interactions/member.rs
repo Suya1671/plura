@@ -33,7 +33,7 @@ pub async fn create_member(
     trace!("Creating member");
     let data = member::View::try_from(view_state).change_context(Error::ParsingView)?;
 
-    let Some(system_id) = System::fetch_by_user_id(&user_state.db, &user_id)
+    let Some(system_id) = System::fetch_by_user_id(&user_id, &user_state.db)
         .await
         .attach_printable("Error checking if system exists")
         .change_context(Error::Sqlx)?

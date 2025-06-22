@@ -46,6 +46,14 @@ async fn interaction_event(
                     )
                     .await?;
                 }
+                "reproxy_message" => {
+                    message::start_reproxy(
+                        message_event,
+                        client,
+                        states.read().await.get_user_state().unwrap(),
+                    )
+                    .await?;
+                }
                 id => warn!(id, "Unknown message action callback ID"),
             }
             Ok(())
@@ -123,6 +131,28 @@ async fn handle_modal_view(
             let channel_id = SlackChannelId::new(channel_id.to_owned());
 
             if let Err(e) = message::edit(
+                view_state,
+                &client,
+                user_state,
+                user_id.clone().into(),
+                message_id,
+                channel_id,
+            )
+            .await
+            {
+                handle_user_error(e, user_id.into(), client).await;
+            }
+        }
+        Some(id) if id.starts_with("reproxy_message_") => {
+            debug!("Received reproxy message modal view");
+
+            let stripped = id.strip_prefix("reproxy_message_").unwrap();
+
+            let (message_id, channel_id) = stripped.split_once('_').unwrap();
+            let message_id = SlackTs::new(message_id.to_owned());
+            let channel_id = SlackChannelId::new(channel_id.to_owned());
+
+            if let Err(e) = message::reproxy(
                 view_state,
                 &client,
                 user_state,

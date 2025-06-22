@@ -128,7 +128,7 @@ async fn handle_message(
 
     fields!(user_id = ?&user_id);
 
-    let Some(mut system) = models::System::fetch_by_user_id(&user_state.db, &user_id)
+    let Some(mut system) = models::System::fetch_by_user_id(&user_id, &user_state.db)
         .await
         .change_context(PushEventError::SystemFetch)?
     else {

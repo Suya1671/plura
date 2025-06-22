@@ -159,7 +159,7 @@ impl Member {
 
         fields!(user_id = %user_id.clone());
 
-        let Some(system) = models::System::fetch_by_user_id(&user_state.db, &user_id)
+        let Some(system) = models::System::fetch_by_user_id(&user_id, &user_state.db)
             .await
             .change_context(CommandError::Sqlx)?
         else {
@@ -178,7 +178,7 @@ impl Member {
         fields!(system_id = %system.id);
 
         let members = system
-            .get_members(&user_state.db)
+            .members(&user_state.db)
             .await
             .change_context(CommandError::Sqlx)?;
 

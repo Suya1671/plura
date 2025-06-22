@@ -102,7 +102,7 @@ impl Trigger {
         let user_state = states.get_user_state::<user::State>().unwrap();
 
         let Some(system_id) =
-            models::System::fetch_by_user_id(&user_state.db, &user::Id::new(event.user_id))
+            models::System::fetch_by_user_id(&user::Id::new(event.user_id), &user_state.db)
                 .await
                 .change_context(CommandError::Sqlx)?
                 .map(|system| system.id)
