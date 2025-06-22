@@ -7,7 +7,8 @@ use slack_morphism::prelude::*;
 use crate::{
     BOT_TOKEN, fields,
     models::{
-        Member, MessageLog, System, Trusted, member,
+        Member, MessageLog, System, member,
+        trust::Trusted,
         user::{self, State},
     },
 };

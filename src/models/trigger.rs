@@ -2,7 +2,10 @@ use std::str::FromStr;
 
 use crate::id;
 
-use super::{Trusted, Untrusted, member, system};
+use super::{
+    member, system,
+    trust::{Trusted, Untrusted},
+};
 use error_stack::{Result, ResultExt};
 use sqlx::{SqlitePool, prelude::*, sqlite::SqliteQueryResult};
 
@@ -81,10 +84,18 @@ impl Id<Trusted> {
 
 #[derive(Debug, sqlx::Type, displaydoc::Display, PartialEq, Eq, clap::ValueEnum, Clone, Copy)]
 #[repr(i64)]
+/// The type of trigger.
+///
+/// This determines how text patterns activate members.
+#[ignore_extra_doc_attributes]
 pub enum Type {
     /// Suffix
+    ///
+    /// Matches the end of a message (e.g. "-J" would match "hello -J")
     Suffix = 0,
     /// Prefix
+    ///
+    /// Matches the beginning of a message (e.g. "]J" would match "]J hello")
     Prefix = 1,
 }
 

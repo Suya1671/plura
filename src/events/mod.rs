@@ -1,3 +1,7 @@
+//! Module containing all the event handlers for the Slack System Bot.
+//!
+//! This is where message rewriting, trigger detection, and message handling logic are implemented.
+
 use std::{convert::Infallible, sync::Arc};
 
 use axum::{Extension, body::Bytes, http::Response};
@@ -152,7 +156,7 @@ async fn handle_message(
 
     if let Some(ref message_content) = content.text {
         let Some(member) = system
-            .fetch_triggered_member(&user_state.db, message_content)
+            .find_member_by_trigger_rules(&user_state.db, message_content)
             .await
             .change_context(PushEventError::MemberFetch)?
         else {
@@ -163,9 +167,9 @@ async fn handle_message(
         fields!(member = ?&member);
         debug!("Member triggered");
 
-        if system.trigger_changes_active_member {
+        if system.auto_switch_on_trigger {
             system
-                .change_active_member(Some(member.id), &user_state.db)
+                .change_fronting_member(Some(member.id), &user_state.db)
                 .await
                 .change_context(PushEventError::MemberChange)?;
         }
@@ -187,7 +191,7 @@ async fn handle_message(
     debug!("Member not triggered");
 
     // No triggers ran, so check if there's any actively fronting member
-    if let Some(member_id) = system.active_member_id {
+    if let Some(member_id) = system.currently_fronting_member_id {
         fields!(member = %&member_id);
         let member = models::Member::fetch_by_id(member_id, &user_state.db)
             .await
@@ -216,7 +220,7 @@ async fn rewrite_message(
     channel_id: &SlackChannelId,
     message_id: SlackTs,
     mut content: SlackMessageContent,
-    member: models::TriggeredMember,
+    member: models::DetectedMember,
     system: &models::System,
     db: &SqlitePool,
 ) -> error_stack::Result<(), RewriteMessageError> {
@@ -317,7 +321,7 @@ async fn rewrite_message(
     Ok(())
 }
 
-fn rewrite_content(content: &mut SlackMessageContent, member: &models::TriggeredMember) {
+fn rewrite_content(content: &mut SlackMessageContent, member: &models::DetectedMember) {
     debug!("Rewriting message content");
 
     if let Some(text) = &mut content.text {

@@ -4,10 +4,17 @@ use tracing::debug;
 
 use crate::{
     fetch_member, fetch_system,
-    models::{self, Untrusted, alias, member::MemberRef, user},
+    models::{self, alias, member::MemberRef, trust::Untrusted, user},
 };
 
 #[derive(clap::Subcommand, Debug)]
+#[clap(verbatim_doc_comment)]
+/// An alias is a unique identifier for a member within a system.
+///
+/// You can use aliases to refer to members without knowing their member ID in other commands.
+///
+/// Also see:
+/// - /members for managing members and their profiles.
 pub enum Alias {
     /// Adds a new alias for a member.
     Add {
@@ -36,6 +43,7 @@ pub enum Alias {
 }
 
 #[derive(thiserror::Error, displaydoc::Display, Debug)]
+/// Errors that can occur when running the alias command.
 pub enum CommandError {
     /// Error while calling the database
     Sqlx,

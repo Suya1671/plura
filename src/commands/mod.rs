@@ -1,3 +1,10 @@
+//! Module containing all the commands for the Slack System Bot.
+//!
+//! This module provides a set of commands that can be used to manage members, system settings, triggers, and aliases.
+//!
+//! A command is internally handled by [`clap`], which parses the command line arguments and executes the corresponding command.
+//! This is a surprisingly effective way to handle slack slash commands, and provides a standard interface and documentation through help commands.
+
 use std::sync::Arc;
 
 mod alias;
@@ -142,7 +149,9 @@ async fn command_event_callback(
 
             let formatted = error.render();
             Ok(SlackCommandEventResponse::new(
-                SlackMessageContent::new().with_text(formatted.to_string()),
+                SlackMessageContent::new().with_blocks(slack_blocks![some_into(
+                    SlackSectionBlock::new().with_text(md!("{}", formatted))
+                )]),
             ))
         }
     }

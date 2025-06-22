@@ -1,6 +1,9 @@
 use crate::id;
 
-use super::{Trusted, Untrusted, member, system};
+use super::{
+    member, system,
+    trust::{Trusted, Untrusted},
+};
 use error_stack::{Result, ResultExt};
 use sqlx::{SqlitePool, prelude::*, sqlite::SqliteQueryResult};
 

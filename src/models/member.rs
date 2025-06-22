@@ -8,8 +8,9 @@ use tracing::{debug, warn};
 use crate::id;
 
 use super::{
-    Trusted, Untrusted, system,
+    system,
     trigger::{Trigger, Type},
+    trust::{Trusted, Untrusted},
     user,
 };
 
@@ -192,9 +193,9 @@ impl Member {
     }
 }
 
-/// All information required to display a member
+/// All information required to display a member that has been detected from a message
 #[derive(FromRow, Debug)]
-pub struct TriggeredMember {
+pub struct DetectedMember {
     /// The ID of the member
     pub id: Id<Trusted>,
     /// The display name of the member
@@ -207,7 +208,7 @@ pub struct TriggeredMember {
     pub typ: Type,
 }
 
-impl From<Member> for TriggeredMember {
+impl From<Member> for DetectedMember {
     fn from(value: Member) -> Self {
         Self {
             id: value.id,

@@ -13,6 +13,15 @@ use crate::{
 };
 
 #[derive(clap::Subcommand, Debug)]
+#[clap(verbatim_doc_comment)]
+/// A system is your plural system: a collection of members/profiles.
+///
+/// You can use /system create to get started with your system, and thus access the rest of the bots features.
+/// This will require you to authenticate with Slack, as the bot will need to delete messages from your account when
+/// sending messages as members.
+///
+/// Also see:
+/// - /members for getting started with your members and their profiles.
 pub enum System {
     /// Creates a system for your profile
     Create {
@@ -24,9 +33,9 @@ pub enum System {
         /// Your system's new name
         name: String,
     },
-    /// Reauthenticates your system with Slack
+    /// Re-authenticates your system with Slack
     Reauth,
-    /// Get info about your or another user's system
+    /// Get information about your or another user's system
     Info {
         /// The user to get info about (if left blank, defaults to you)
         user: Option<String>,

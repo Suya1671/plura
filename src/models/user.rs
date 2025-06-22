@@ -5,7 +5,7 @@ use sqlx::{Database, SqlitePool, prelude::*, types::Text};
 
 use crate::BOT_TOKEN;
 
-use super::{Trusted, Untrusted};
+use super::trust::{Trusted, Untrusted};
 
 #[derive(Type, Debug, PartialEq, Eq, Clone)]
 pub struct Id<T> {

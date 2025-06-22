@@ -1,12 +1,12 @@
 use crate::{
     fields, id,
-    models::member::{Member, TriggeredMember},
+    models::member::{DetectedMember, Member},
 };
 
 use super::{
-    Trustability, Trusted,
     member::{self},
     trigger::Trigger,
+    trust::{Trustability, Trusted},
     user,
 };
 use error_stack::{Result, ResultExt};
@@ -15,7 +15,9 @@ use sqlx::{SqlitePool, prelude::*};
 use tracing::debug;
 
 id!(
-    /// For an ID to be trusted, it must
+    /// An ID for a [`System`].
+    ///
+    /// For an ID to be trusted, it must:
     ///
     /// - Be a valid ID in the database
     /// - Be associated with a valid user
@@ -67,7 +69,7 @@ impl Id<Trusted> {
         sqlx::query!(
             r#"
             UPDATE systems
-            SET active_member_id = $1
+            SET currently_fronting_member_id = $1
             WHERE id = $2
             "#,
             new_active_member_id,
@@ -88,8 +90,8 @@ impl Id<Trusted> {
             SELECT
                 id as "id: Id<Trusted>",
                 owner_id as "owner_id: user::Id<Trusted>",
-                active_member_id as "active_member_id: member::Id<Trusted>",
-                trigger_changes_active_member,
+                currently_fronting_member_id as "currently_fronting_member_id: member::Id<Trusted>",
+                auto_switch_on_trigger,
                 slack_oauth_token,
                 name,
                 created_at as "created_at: time::PrimitiveDateTime"
@@ -122,13 +124,26 @@ impl From<String> for SlackOauthToken {
 
 #[derive(FromRow, Debug)]
 #[allow(dead_code)]
+/// A plural system
+///
+/// A system has 1 owner and many members.
+/// The owner is the slack user who created the system.
+/// See [`member::Member`] for more information about members.
+///
+/// A system may have an active currently fronting member. Any messages sent by the system will be sent by this member.
 pub struct System {
     #[sqlx(flatten)]
+    /// The unique identifier for the system.
     pub id: Id<Trusted>,
+    /// The owner of the system.
     pub owner_id: user::Id<Trusted>,
-    pub active_member_id: Option<member::Id<Trusted>>,
-    pub trigger_changes_active_member: bool,
+    /// The currently fronting member, if any
+    pub currently_fronting_member_id: Option<member::Id<Trusted>>,
+    /// Whether a [`trigger::Trigger`] activation changes the active member to the member the trigger is associated with
+    pub auto_switch_on_trigger: bool,
+    /// The name of the system
     pub name: String,
+    /// The Slack OAuth token for the system
     pub slack_oauth_token: SlackOauthToken,
     pub created_at: time::PrimitiveDateTime,
 }
@@ -148,8 +163,8 @@ impl System {
             SELECT
                 id as "id: Id<Trusted>",
                 owner_id as "owner_id: user::Id<Trusted>",
-                active_member_id as "active_member_id: member::Id<Trusted>",
-                trigger_changes_active_member,
+                currently_fronting_member_id as "currently_fronting_member_id: member::Id<Trusted>",
+                auto_switch_on_trigger,
                 slack_oauth_token,
                 name,
                 created_at as "created_at: time::PrimitiveDateTime"
@@ -167,24 +182,24 @@ impl System {
 
     #[tracing::instrument(skip(db))]
     pub async fn active_member(&self, db: &SqlitePool) -> Result<Option<Member>, sqlx::Error> {
-        match self.active_member_id {
+        match self.currently_fronting_member_id {
             Some(id) => Ok(Some(Member::fetch_by_id(id, db).await?)),
             None => Ok(None),
         }
     }
 
     #[tracing::instrument(skip(db))]
-    pub async fn change_active_member(
+    pub async fn change_fronting_member(
         &mut self,
-        new_active_member_id: Option<member::Id<Trusted>>,
+        new_fronting_member_id: Option<member::Id<Trusted>>,
         db: &SqlitePool,
     ) -> Result<Option<Member>, sqlx::Error> {
         let new_active_member = self
             .id
-            .change_active_member(new_active_member_id, db)
+            .change_active_member(new_fronting_member_id, db)
             .await?;
 
-        self.active_member_id = new_active_member_id;
+        self.currently_fronting_member_id = new_fronting_member_id;
         Ok(new_active_member)
     }
 
@@ -214,14 +229,14 @@ impl System {
         .attach_printable("Failed to fetch members")
     }
 
-    pub async fn fetch_triggered_member(
+    pub async fn find_member_by_trigger_rules(
         &self,
         db: &SqlitePool,
         message: &str,
-    ) -> Result<Option<TriggeredMember>, sqlx::Error> {
-        debug!(message, "Fetching triggered member");
+    ) -> Result<Option<DetectedMember>, sqlx::Error> {
+        debug!(message, "Finding detected member if there is a match");
         sqlx::query_as!(
-            TriggeredMember,
+            DetectedMember,
             r#"
                 SELECT
                     members.id as "id: member::Id<Trusted>",

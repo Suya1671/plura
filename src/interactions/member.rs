@@ -5,8 +5,9 @@ use tracing::trace;
 use crate::{
     BOT_TOKEN, fields,
     models::{
-        Trusted, member,
+        member,
         system::System,
+        trust::Trusted,
         user::{self, State},
     },
 };

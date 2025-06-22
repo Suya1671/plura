@@ -12,7 +12,7 @@ use tracing::error;
 
 use crate::{
     env,
-    models::{Trusted, user},
+    models::{trust::Trusted, user},
 };
 
 #[derive(Serialize, Deserialize, Debug)]

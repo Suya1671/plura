@@ -4,10 +4,17 @@ use tracing::debug;
 
 use crate::{
     fetch_member, fetch_system, fields,
-    models::{self, Untrusted, member::MemberRef, trigger, user},
+    models::{self, member::MemberRef, trigger, trust::Untrusted, user},
 };
 
 #[derive(clap::Subcommand, Debug)]
+#[clap(verbatim_doc_comment)]
+/// A trigger is a special word/phrase that can be used to send a message under a specific members profile
+///
+/// A trigger can be a prefix to a message or suffix. The prefix/suffix is erased when resending the message.
+///
+/// Also see:
+/// - /members to manage the members themselves
 pub enum Trigger {
     /// Adds a new trigger for a member. Expect a popup to fill in the info!
     Add {

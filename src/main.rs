@@ -10,23 +10,23 @@ mod models;
 mod oauth;
 mod util;
 
-use crate::models::Trusted;
-use std::str::FromStr;
-use std::sync::LazyLock;
-use std::{process::ExitCode, sync::Arc};
+use crate::models::{system, trust::Trusted, user};
+use std::{
+    process::ExitCode,
+    str::FromStr,
+    sync::{Arc, LazyLock},
+};
 
 use axum::{extract::MatchedPath, http::Request};
 use commands::process_command_event;
 use error_stack::{ResultExt, report};
 use events::process_push_event;
 use interactions::process_interaction_event;
-use models::{system, user};
 use oauth::oauth_handler;
 use slack_morphism::prelude::*;
 use sqlx::{SqlitePool, sqlite::SqliteConnectOptions};
 use tower_http::trace::TraceLayer;
-use tracing::info_span;
-use tracing::{debug, info, level_filters::LevelFilter};
+use tracing::{debug, info, info_span, level_filters::LevelFilter};
 use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
 
 /// The slack app token. Used for socket mode if we ever decide to use it.

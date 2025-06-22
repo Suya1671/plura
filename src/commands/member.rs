@@ -14,30 +14,58 @@ use crate::{
 };
 
 #[derive(clap::Subcommand, Debug)]
+#[clap(verbatim_doc_comment)]
+/// A member is an "alter" who is part of your system. This manages member profiles.
+///
+/// The main feature of this bot is that it allows you to treat each member profile like a Slack account.
+/// You can send messages, define information about them, etc. Without having to make new Slack accounts for each member and manage them.
+///
+/// This does come with limitations:
+/// - Each member is not a Slack account. It's simply this bot sending something under the name of the member.
+/// - This also means members have a custom
+///
+/// Also see:
+/// - /triggers to manage member triggers (Custom prefixes/suffixes that will automatically message under a specific member profile) \n
+/// - /aliases to manage member aliases (Custom names that can be used to refer to the member in commands)
 pub enum Member {
     /// Adds a new member to your system. Expect a popup to fill in the member info!
     Add,
     /// Deletes a member from your system.
+    ///
+    /// This doesn't actually "delete" the member entirely, nor does it delete messages sent by this member.
+    /// Rather, the member is disabled and cannot be accessed. This is for moderation purposes.
+    /// If you wish for the member to be re-enabled, [TO-DO: Implement re-enable functionality]
     Delete {
         /// The member to delete
         member: MemberRef,
     },
     /// Gets info about a member
+    ///
+    /// This will display information about the member, including their name, pronouns, and other details.
     Info {
         /// The member to get info about.
         member_id: MemberRef,
     },
     /// Lists all members in a system
+    ///
+    /// This will contain basic information about each member.
+    /// For more detailed information, use the `/members info` command.
     List {
         /// The system to list members from. If left blank, defaults to your system.
         system: Option<String>,
     },
     /// Edits a member's info
+    ///
+    ///  Expect a popup to edit the info!
     Edit {
-        /// The member to edit. Expect a popup to edit the info!
+        /// The member to edit.
         member_id: MemberRef,
     },
     /// Switch to a different member
+    ///
+    /// You can switch to a different member by providing their ID or username.
+    /// Alternatively, you can use `/members switch --base` to revert to your base account,
+    /// and the bot will not rewrite messages under a member profile.
     #[group(required = true)]
     Switch {
         /// The member to switch to.

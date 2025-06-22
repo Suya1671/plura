@@ -1,6 +1,6 @@
 use crate::id;
 
-use super::{Trusted, member};
+use super::{member, trust::Trusted};
 use error_stack::{Result, ResultExt};
 use slack_morphism::SlackTs;
 use sqlx::{SqlitePool, prelude::*, sqlite::SqliteQueryResult};

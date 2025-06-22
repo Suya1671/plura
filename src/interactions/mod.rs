@@ -9,7 +9,7 @@ use member::{create_member, edit_member};
 use slack_morphism::prelude::*;
 use tracing::{debug, error, warn};
 
-use crate::models::{self, Trusted, user};
+use crate::models::{self, trust::Trusted, user};
 use crate::{BOT_TOKEN, fields};
 
 #[tracing::instrument(skip(event, environment))]
