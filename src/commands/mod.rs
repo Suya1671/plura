@@ -36,6 +36,8 @@ enum Command {
     Triggers(Trigger),
     #[clap(subcommand)]
     Aliases(Alias),
+    /// Provides an explanation of this bot.
+    Explain,
 }
 
 impl Command {
@@ -63,7 +65,24 @@ impl Command {
                 .run(event, state)
                 .await
                 .change_context(CommandError::Aliases),
+            Self::Explain => Ok(Self::explain()),
         }
+    }
+
+    fn explain() -> SlackCommandEventResponse {
+        SlackCommandEventResponse::new(
+            SlackMessageContent::new().with_text(
+                indoc::indoc! {r#"
+                Slack System Bot is a bot that can replace user-sent messages under a "pseudo-account" of a systems member profile using custom display information.
+
+                This is useful for multiple people sharing one body (aka. systems), people who wish to role-play as different characters without having multiple Slack profiles, or anyone else who may want to post messages under a different identity from the same Slack account.
+
+                Due to Slack's limitations, these messages will show up with the [APP] tag - however, they are not apps/bots. You can use message actions to find who the message was sent by.
+
+                If you wish to use the bot yourself, you can start with `/system help` and `/members help`.
+                "#}.into(),
+            ),
+        ).with_response_type(SlackMessageResponseType::InChannel)
     }
 }
 
