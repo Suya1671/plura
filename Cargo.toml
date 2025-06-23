@@ -1,11 +1,11 @@
 [package]
-name = "slack-system-bot"
+name = "plura"
 version = "0.1.0"
 edition = "2024"
 license = "MIT"
 categories = ["command-line-utilities", "web-programming::http-server"]
 description = "Bot for Slack workspaces to make the lives for plural systems a bit easier"
-repository = "https://github.com/Suya1671/slack-system-bot.git"
+repository = "https://github.com/Suya1671/plura.git"
 keywords = ["plural", "slack-bot", "cli", "web-server"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html

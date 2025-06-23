@@ -1737,6 +1737,38 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7edddbd0b52d732b21ad9a5fab5c704c14cd949e5e9a1ec5929a24fded1b904c"
 
 [[package]]
+name = "plura"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "clap",
+ "derive_more",
+ "displaydoc",
+ "dotenvy 0.15.7 (git+https://github.com/allan2/dotenvy)",
+ "error-stack",
+ "futures",
+ "http-body-util",
+ "indoc",
+ "libsqlite3-sys",
+ "menv",
+ "oauth2",
+ "redact",
+ "rustls",
+ "serde",
+ "serde_json",
+ "slack-morphism",
+ "sqlx",
+ "thiserror 2.0.12",
+ "time",
+ "tokio",
+ "tower-http",
+ "tracing",
+ "tracing-error",
+ "tracing-subscriber",
+ "url",
+]
+
+[[package]]
 name = "potential_utf"
 version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2459,38 +2491,6 @@ dependencies = [
  "tokio-tungstenite",
  "tower",
  "tracing",
- "url",
-]
-
-[[package]]
-name = "slack-system-bot"
-version = "0.1.0"
-dependencies = [
- "axum",
- "clap",
- "derive_more",
- "displaydoc",
- "dotenvy 0.15.7 (git+https://github.com/allan2/dotenvy)",
- "error-stack",
- "futures",
- "http-body-util",
- "indoc",
- "libsqlite3-sys",
- "menv",
- "oauth2",
- "redact",
- "rustls",
- "serde",
- "serde_json",
- "slack-morphism",
- "sqlx",
- "thiserror 2.0.12",
- "time",
- "tokio",
- "tower-http",
- "tracing",
- "tracing-error",
- "tracing-subscriber",
  "url",
 ]
 

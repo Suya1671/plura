@@ -1,5 +1,5 @@
-# slack-system-bot
-A bot of all time for plural folks :D
+# Plura
+A slack bot designed to make the lives of plural systems easier. Inspired by PluralKit.
 
 ## Features
 - Manage members and profiles

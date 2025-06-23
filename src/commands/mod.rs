@@ -129,8 +129,8 @@ async fn command_event_callback(
 
     let formatted_command = event.command.0.trim_start_matches('/');
     let formatted = event.text.as_ref().map_or_else(
-        || format!("slack-system-bot {formatted_command}"),
-        |text| format!("slack-system-bot {formatted_command} {text}"),
+        || format!("plura {formatted_command}"),
+        |text| format!("plura {formatted_command} {text}"),
     );
 
     fields!(command = &formatted);
