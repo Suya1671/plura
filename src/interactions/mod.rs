@@ -62,6 +62,14 @@ async fn interaction_event(
                     )
                     .await?;
                 }
+                "message_info" => {
+                    message::info(
+                        message_event,
+                        client,
+                        states.read().await.get_user_state().unwrap(),
+                    )
+                    .await?;
+                }
                 id => warn!(id, "Unknown message action callback ID"),
             }
             Ok(())

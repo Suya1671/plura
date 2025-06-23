@@ -1,4 +1,4 @@
-use std::{fmt::Display, marker::PhantomData};
+use std::{fmt::Display, marker::PhantomData, ops::Deref};
 
 use slack_morphism::{errors::SlackClientError, prelude::*};
 use sqlx::{Database, SqlitePool, prelude::*, types::Text};
@@ -11,6 +11,14 @@ use super::trust::{Trusted, Untrusted};
 pub struct Id<T> {
     pub id: Text<SlackUserId>,
     trusted: PhantomData<T>,
+}
+
+impl Deref for Id<Trusted> {
+    type Target = SlackUserId;
+
+    fn deref(&self) -> &Self::Target {
+        &self.id
+    }
 }
 
 impl<'q, DB> Encode<'q, DB> for Id<Trusted>

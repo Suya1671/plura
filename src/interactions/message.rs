@@ -602,3 +602,88 @@ pub async fn delete(
 
     Ok(())
 }
+
+#[tracing::instrument(skip(client, user_state))]
+pub async fn info(
+    event: SlackInteractionMessageActionEvent,
+    client: Arc<SlackHyperClient>,
+    user_state: &State,
+) -> Result<(), Error> {
+    let session = client.open_session(&BOT_TOKEN);
+
+    let message = event
+        .message
+        .expect("Expected message to edit to, well, have a message");
+
+    let Some(log) = MessageLog::fetch_by_message_id(&message.origin.ts, &user_state.db)
+        .await
+        .change_context(Error::Sqlx)?
+    else {
+        debug!(
+            "Message not found in database. User is trying to get information about a message that isn't sent by us."
+        );
+
+        session
+            .chat_post_ephemeral(&SlackApiChatPostEphemeralRequest::new(
+                event.channel.unwrap().id,
+                event.user.id,
+                SlackMessageContent::new().with_text("A member didn't send this message.".into()),
+            ))
+            .await
+            .change_context(Error::Slack)?;
+
+        return Ok(());
+    };
+
+    let member = log
+        .member_id
+        .fetch(&user_state.db)
+        .await
+        .change_context(Error::Sqlx)?;
+
+    let system = member
+        .system_id
+        .fetch(&user_state.db)
+        .await
+        .change_context(Error::Sqlx)?;
+
+    let blocks = slack_blocks![
+        some_into(SlackHeaderBlock::new(member.full_name.into())),
+        some_into(SlackDividerBlock::new()),
+        some_into(
+            SlackSectionBlock::new()
+                .with_text(md!(
+                    "*{}*\n{}{}\n*System*: {} ({})",
+                    member.display_name,
+                    member.pronouns.unwrap_or_default(),
+                    member
+                        .name_pronunciation
+                        .map(|pronunciation| format!(" - {pronunciation}"))
+                        .unwrap_or_default(),
+                    system.name,
+                    system.owner_id.to_slack_format()
+                ))
+                .opt_accessory(member.profile_picture_url.and_then(|url| Some(
+                    SlackSectionBlockElement::Image(SlackBlockImageElement::new(
+                        url.parse().ok()?,
+                        "Profile picture".into()
+                    ))
+                )))
+        ),
+        optionally_into(system.currently_fronting_member_id.is_some_and(|id| id == member.id) => SlackSectionBlock::new().with_text(md!("*Fronting*")))
+        // TO-DO: fields
+    ];
+
+    session
+        .chat_post_ephemeral(&SlackApiChatPostEphemeralRequest::new(
+            event.channel.unwrap().id,
+            event.user.id,
+            SlackMessageContent::new().with_blocks(blocks),
+        ))
+        .await
+        .change_context(Error::Slack)?;
+
+    debug!("Deleted message");
+
+    Ok(())
+}
