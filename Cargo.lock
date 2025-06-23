@@ -2466,6 +2466,7 @@ dependencies = [
  "displaydoc",
  "dotenvy 0.15.7 (git+https://github.com/allan2/dotenvy)",
  "error-stack",
+ "futures",
  "http-body-util",
  "libsqlite3-sys",
  "menv",

@@ -44,7 +44,7 @@ impl Id<Trusted> {
     }
 
     #[tracing::instrument(skip(db))]
-    pub async fn change_active_member(
+    pub async fn change_fronting_member(
         self,
         new_active_member_id: Option<member::Id<Trusted>>,
         db: &SqlitePool,
@@ -80,6 +80,25 @@ impl Id<Trusted> {
         .attach_printable("Failed to update system active member")?;
 
         Ok(new_active_member)
+    }
+
+    #[tracing::instrument(skip(db))]
+    pub async fn currently_fronting_member_id(
+        &self,
+        db: &SqlitePool,
+    ) -> Result<Option<member::Id<Trusted>>, sqlx::Error> {
+        sqlx::query!(
+            r#"
+            SELECT currently_fronting_member_id as "id: member::Id<Trusted>"
+            FROM systems
+            WHERE id = $1
+            "#,
+            self.id
+        )
+        .fetch_one(db)
+        .await
+        .attach_printable("Failed to fetch system currently fronting member id")
+        .map(|row| row.id)
     }
 
     #[tracing::instrument(skip(db))]
@@ -196,7 +215,7 @@ impl System {
     ) -> Result<Option<Member>, sqlx::Error> {
         let new_active_member = self
             .id
-            .change_active_member(new_fronting_member_id, db)
+            .change_fronting_member(new_fronting_member_id, db)
             .await?;
 
         self.currently_fronting_member_id = new_fronting_member_id;
@@ -217,6 +236,7 @@ impl System {
                 pronouns,
                 name_pronunciation,
                 name_recording_url,
+                enabled,
                 created_at as "created_at: time::PrimitiveDateTime"
             FROM
                 members
@@ -250,8 +270,9 @@ impl System {
                     triggers ON members.id = triggers.member_id
                 WHERE
                     -- See trigger.rs file for all types and names
-                    (triggers.typ = 0 AND $1 LIKE '%' || triggers.text) OR
-                    (triggers.typ = 1 AND $1 LIKE triggers.text || '%')
+                    members.enabled = TRUE AND
+                    ((triggers.typ = 0 AND $1 LIKE '%' || triggers.text) OR
+                    (triggers.typ = 1 AND $1 LIKE triggers.text || '%'))
             "#,
             message
         )

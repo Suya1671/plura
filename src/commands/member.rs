@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
-use error_stack::{Result, ResultExt};
+use error_stack::{Result, ResultExt, report};
+use futures::TryStreamExt;
 use slack_morphism::prelude::*;
 use tracing::{debug, info, trace};
 
@@ -9,6 +10,7 @@ use crate::{
     models::{
         self,
         member::{self, MemberRef, View},
+        trust::Untrusted,
         user,
     },
 };
@@ -30,20 +32,29 @@ use crate::{
 pub enum Member {
     /// Adds a new member to your system. Expect a popup to fill in the member info!
     Add,
-    /// Deletes a member from your system.
+    /// Disables/Deletes a member from your system.
     ///
     /// This doesn't actually "delete" the member entirely, nor does it delete messages sent by this member.
     /// Rather, the member is disabled and cannot be accessed. This is for moderation purposes.
-    /// If you wish for the member to be re-enabled, [TO-DO: Implement re-enable functionality]
-    Delete {
+    /// If you wish for the member to be re-enabled, you can use the `/members enable` command.
+    ///
+    /// Disabling a member also prevents them from being accessed via their aliases or triggers.
+    Disable {
         /// The member to delete
         member: MemberRef,
+    },
+    /// Enables a member from your system.
+    ///
+    /// This will re-enable the member and allow them to be accessed again.
+    Enable {
+        /// The member to enable
+        member: member::Id<Untrusted>,
     },
     /// Gets info about a member
     ///
     /// This will display information about the member, including their name, pronouns, and other details.
     Info {
-        /// The member to get info about.
+        /// The member to get info about. You must use the member's ID, which you can get from /members list.
         member_id: MemberRef,
     },
     /// Lists all members in a system
@@ -100,12 +111,8 @@ impl Member {
                 let session = client.open_session(token);
                 Self::create_member(event, session).await
             }
-            Self::Delete { member } => {
-                debug!(member_id = ?member, "Delete member command not implemented");
-                Ok(SlackCommandEventResponse::new(
-                    SlackMessageContent::new().with_text("Working on it".into()),
-                ))
-            }
+            Self::Disable { member } => Self::disable(event, &state, member).await,
+            Self::Enable { member } => Self::enable(event, &state, member).await,
             Self::Info { member_id } => Self::member_info(event, &state, member_id).await,
             Self::Edit { member_id } => {
                 Self::edit_member(event, client.open_session(&BOT_TOKEN), &state, member_id).await
@@ -135,13 +142,27 @@ impl Member {
         } else {
             debug!(requested_member_id = ?&member_ref, "Validating member ID");
             fetch_member!(member_ref.as_ref().unwrap(), user_state, system_id => member_id);
+
+            if !member_id
+                .enabled(&user_state.db)
+                .await
+                .change_context(CommandError::Sqlx)?
+            {
+                debug!("Member is disabled");
+
+                return Ok(SlackCommandEventResponse::new(
+                    SlackMessageContent::new()
+                        .with_text("The member you're trying to switch to is disabled! Either re-enable them or choose another member.".into()),
+                ));
+            }
+
             Some(member_id)
         };
 
         debug!(target_member_id = ?new_active_member_id, "Changing active member");
 
         let new_member = system_id
-            .change_active_member(new_active_member_id, &user_state.db)
+            .change_fronting_member(new_active_member_id, &user_state.db)
             .await;
 
         let response = match new_member {
@@ -205,45 +226,128 @@ impl Member {
 
         fields!(system_id = %system.id);
 
-        let members = system
-            .members(&user_state.db)
-            .await
-            .change_context(CommandError::Sqlx)?;
-
-        debug!(member_count = members.len(), "Retrieved system members");
-
-        let member_blocks = members
+        let member_blocks = sqlx::query!(
+            "
+                SELECT
+                    members.id,
+                    display_name,
+                    full_name,
+                    enabled,
+                    GROUP_CONCAT(aliases.alias, ', ') as aliases
+                FROM
+                    members
+                JOIN
+                    aliases ON members.id = aliases.member_id
+                WHERE
+                    members.system_id = $1
+                GROUP BY members.id
+            ",
+            system.id
+        )
+        .fetch(&user_state.db)
+        .map_ok(|member| {
+            let fields = [
+                Some(md!("*Member ID*: {}", member.id)),
+                Some(md!("*Display Name*: {}", member.display_name)),
+                Some(md!("*Aliases: {}", member.aliases)),
+                Some(md!("*Disabled*")).filter(|_| !member.enabled),
+            ]
             .into_iter()
-            .map(|member| {
-                let fields = [
-                    Some(md!("Member ID: {}", member.id)),
-                    Some(md!("Display Name: {}", member.display_name)),
-                    member.title.as_ref().map(|title| md!("Title: {}", title)),
-                    member
-                        .pronouns
-                        .as_ref()
-                        .map(|pronouns| md!("Pronouns: {}", pronouns)),
-                    member
-                        .name_pronunciation
-                        .as_ref()
-                        .map(|name_pronunciation| {
-                            md!("Name Pronunciation: {}", name_pronunciation)
-                        }),
-                    Some(md!("Created At: {}", member.created_at)),
-                ]
-                .into_iter()
-                .flatten()
-                .collect();
-
-                SlackSectionBlock::new()
-                    .with_text(md!("Name: {}", member.full_name))
-                    .with_fields(fields)
-            })
-            .map(Into::into)
+            .flatten()
             .collect();
+
+            SlackSectionBlock::new()
+                .with_text(md!("*{}*", member.full_name))
+                .with_fields(fields)
+        })
+        .map_ok(Into::into)
+        .map_err(|err| report!(err).change_context(CommandError::Sqlx))
+        .try_collect()
+        .await?;
 
         Ok(SlackCommandEventResponse::new(
             SlackMessageContent::new().with_blocks(member_blocks),
+        ))
+    }
+
+    #[tracing::instrument(skip(event, state), fields(user_id = %event.user_id, system_id, member_id))]
+    async fn disable(
+        event: SlackCommandEvent,
+        state: &SlackClientEventsUserState,
+        member_ref: MemberRef,
+    ) -> Result<SlackCommandEventResponse, CommandError> {
+        trace!("Running member disable command");
+
+        let states = state.read().await;
+        let user_state = states.get_user_state::<user::State>().unwrap();
+
+        fetch_system!(event, user_state => system_id);
+
+        fetch_member!(member_ref, user_state, system_id => member_id);
+
+        if !member_id
+            .enabled(&user_state.db)
+            .await
+            .change_context(CommandError::Sqlx)?
+        {
+            return Ok(SlackCommandEventResponse::new(
+                SlackMessageContent::new().with_text("Member is already disabled".into()),
+            ));
+        }
+
+        let system_fronting_member_id = system_id
+            .currently_fronting_member_id(&user_state.db)
+            .await
+            .change_context(CommandError::Sqlx)?;
+
+        if system_fronting_member_id.is_some_and(|id| id == member_id) {
+            return Ok(SlackCommandEventResponse::new(
+                SlackMessageContent::new().with_text("Cannot disable the currently fronting member. You can use `/members switch` to switch to another member.".into()),
+            ));
+        }
+
+        member_id
+            .set_enabled(false, &user_state.db)
+            .await
+            .change_context(CommandError::Sqlx)?;
+
+        Ok(SlackCommandEventResponse::new(
+            SlackMessageContent::new().with_text("Member disabled".into()),
+        ))
+    }
+
+    #[tracing::instrument(skip(event, state), fields(user_id = %event.user_id, system_id, member_id))]
+    async fn enable(
+        event: SlackCommandEvent,
+        state: &SlackClientEventsUserState,
+        member: member::Id<Untrusted>,
+    ) -> Result<SlackCommandEventResponse, CommandError> {
+        trace!("Running member enable command");
+
+        let states = state.read().await;
+        let user_state = states.get_user_state::<user::State>().unwrap();
+
+        fetch_system!(event, user_state => system_id);
+
+        fetch_member!(member, user_state, system_id => member_id);
+
+        if member_id
+            .enabled(&user_state.db)
+            .await
+            .change_context(CommandError::Sqlx)?
+        {
+            return Ok(SlackCommandEventResponse::new(
+                SlackMessageContent::new().with_text("Member is already enabled".into()),
+            ));
+        }
+
+        member_id
+            .set_enabled(true, &user_state.db)
+            .await
+            .change_context(CommandError::Sqlx)?;
+
+        Ok(SlackCommandEventResponse::new(
+            SlackMessageContent::new().with_text("Member enabled".into()),
         ))
     }
 
@@ -268,29 +372,47 @@ impl Member {
 
         debug!("Member found");
 
-        let fields = [
-            Some(md!("Member ID: {}", member.id)),
-            Some(md!("Display Name: {}", member.display_name)),
-            member.title.as_ref().map(|title| md!("Title: {}", title)),
-            member
-                .pronouns
-                .as_ref()
-                .map(|pronouns| md!("Pronouns: {}", pronouns)),
-            member
-                .name_pronunciation
-                .as_ref()
-                .map(|name_pronunciation| md!("Name Pronunciation: {}", name_pronunciation)),
-        ]
-        .into_iter()
-        .flatten()
-        .collect();
+        if !member.enabled {
+            return Ok(SlackCommandEventResponse::new(
+                SlackMessageContent::new().with_text(format!(
+                    "Member {} is not enabled. You can use `/member enable {}` to enable them.",
+                    member.full_name, member.id
+                )),
+            ));
+        }
 
-        let block = SlackSectionBlock::new()
-            .with_text(md!("Name: {}", member.full_name))
-            .with_fields(fields);
+        let system_fronting_member_id = system_id
+            .currently_fronting_member_id(&user_state.db)
+            .await
+            .change_context(CommandError::Sqlx)?;
+
+        let blocks = slack_blocks![
+            some_into(SlackHeaderBlock::new(member.full_name.into())),
+            some_into(SlackDividerBlock::new()),
+            some_into(
+                SlackSectionBlock::new()
+                    .with_text(md!(
+                        "*{}*\n{}{}",
+                        member.display_name,
+                        member.pronouns.unwrap_or_default(),
+                        member
+                            .name_pronunciation
+                            .map(|pronunciation| format!(" - {pronunciation}"))
+                            .unwrap_or_default()
+                    ))
+                    .opt_accessory(member.profile_picture_url.and_then(|url| Some(
+                        SlackSectionBlockElement::Image(SlackBlockImageElement::new(
+                            url.parse().ok()?,
+                            "Profile picture".into()
+                        ))
+                    )))
+            ),
+            optionally_into(system_fronting_member_id.is_some_and(|id| id == member.id) => SlackSectionBlock::new().with_text(md!("*Fronting*")))
+            // TO-DO: fields
+        ];
 
         Ok(SlackCommandEventResponse::new(
-            SlackMessageContent::new().with_blocks(vec![block.into()]),
+            SlackMessageContent::new().with_blocks(blocks),
         ))
     }
 

@@ -21,13 +21,13 @@ use std::fmt::Debug;
 pub trait Trustability: Send + Sync + Debug {}
 
 /// A trusted/valid ID
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Trusted;
 
 impl Trustability for Trusted {}
 
 /// An untrusted ID
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Untrusted;
 
 impl Trustability for Untrusted {}

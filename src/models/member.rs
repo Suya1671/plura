@@ -104,6 +104,30 @@ impl Id<Trusted> {
     pub async fn fetch(self, db: &SqlitePool) -> Result<Member, sqlx::Error> {
         Member::fetch_by_id(self, db).await
     }
+
+    #[tracing::instrument(skip(db))]
+    pub async fn enabled(self, db: &SqlitePool) -> Result<bool, sqlx::Error> {
+        sqlx::query!("SELECT enabled FROM members WHERE id = $1", self)
+            .fetch_one(db)
+            .await
+            .attach_printable("Failed to fetch member enabled status")
+            .map(|res| res.enabled)
+    }
+
+    pub async fn set_enabled(
+        self,
+        enabled: bool,
+        db: &SqlitePool,
+    ) -> Result<SqliteQueryResult, sqlx::Error> {
+        sqlx::query!(
+            "UPDATE members SET enabled = $1 WHERE id = $2",
+            enabled,
+            self
+        )
+        .execute(db)
+        .await
+        .attach_printable("Failed to update member enabled status")
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -162,6 +186,8 @@ pub struct Member {
     pub name_pronunciation: Option<String>,
     pub name_recording_url: Option<String>,
     pub created_at: time::PrimitiveDateTime,
+    /// A deleted member is effectively a disabled member. They exist in the database, but you cannot interact with them in many ways.
+    pub enabled: bool,
 }
 
 impl Member {
@@ -181,6 +207,7 @@ impl Member {
                 pronouns,
                 name_pronunciation,
                 name_recording_url,
+                enabled,
                 created_at as "created_at: time::PrimitiveDateTime"
             FROM members
             WHERE id = $1
