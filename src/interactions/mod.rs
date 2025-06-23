@@ -54,6 +54,14 @@ async fn interaction_event(
                     )
                     .await?;
                 }
+                "delete_message" => {
+                    message::delete(
+                        message_event,
+                        client,
+                        states.read().await.get_user_state().unwrap(),
+                    )
+                    .await?;
+                }
                 id => warn!(id, "Unknown message action callback ID"),
             }
             Ok(())

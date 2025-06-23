@@ -533,3 +533,72 @@ impl TryFrom<SlackViewState> for ReproxyView {
         Ok(view)
     }
 }
+
+#[tracing::instrument(skip(client, user_state))]
+pub async fn delete(
+    event: SlackInteractionMessageActionEvent,
+    client: Arc<SlackHyperClient>,
+    user_state: &State,
+) -> Result<(), Error> {
+    let session = client.open_session(&BOT_TOKEN);
+
+    let message = event
+        .message
+        .expect("Expected message to edit to, well, have a message");
+
+    let Some(log) = MessageLog::fetch_by_message_id(&message.origin.ts, &user_state.db)
+        .await
+        .change_context(Error::Sqlx)?
+    else {
+        debug!(
+            "Message not found in database. User is trying to delete a message that isn't sent by us."
+        );
+
+        session
+            .chat_post_ephemeral(&SlackApiChatPostEphemeralRequest::new(
+                event.channel.unwrap().id,
+                event.user.id,
+                SlackMessageContent::new().with_text("A member didn't send this message.".into()),
+            ))
+            .await
+            .change_context(Error::Slack)?;
+
+        return Ok(());
+    };
+
+    let system = log
+        .member_id
+        .fetch(&user_state.db)
+        .await
+        .change_context(Error::Sqlx)?
+        .system_id
+        .fetch(&user_state.db)
+        .await
+        .change_context(Error::Sqlx)?;
+
+    if system.owner_id != event.user.id {
+        session
+            .chat_post_ephemeral(&SlackApiChatPostEphemeralRequest::new(
+                event.channel.unwrap().id,
+                event.user.id,
+                SlackMessageContent::new()
+                    .with_text("Your system didn't send this message.".into()),
+            ))
+            .await
+            .change_context(Error::Slack)?;
+
+        return Ok(());
+    }
+
+    session
+        .chat_delete(&SlackApiChatDeleteRequest::new(
+            event.channel.unwrap().id,
+            message.origin.ts,
+        ))
+        .await
+        .change_context(Error::Slack)?;
+
+    debug!("Deleted message");
+
+    Ok(())
+}
