@@ -375,7 +375,7 @@ impl Member {
         if !member.enabled {
             return Ok(SlackCommandEventResponse::new(
                 SlackMessageContent::new().with_text(format!(
-                    "Member {} is not enabled. You can use `/member enable {}` to enable them.",
+                    "Member {} is not enabled. You can use `/members enable {}` to enable them.",
                     member.full_name, member.id
                 )),
             ));
