@@ -3,9 +3,15 @@ A slack bot designed to make the lives of plural systems easier. Inspired by Plu
 
 ## Features
 - Manage members and profiles
+  - Add, delete, edit, and get member information
+  - Manage member aliases so your members are easier to refer to.
 - Send messages under different members
   - Message editing
+  - Message deletion
+  - Message info (i.e. the profile of the member that sent it)
   - Message reproxying (i.e. sending a message under a different user after it's been sent)
+  - Triggers
+    - E.g. `Hi ~J` to send a message under a user who is associated with the suffix `~J`
 - Set and view information about a member
 
 ## AI Usage in this project
