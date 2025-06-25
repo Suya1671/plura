@@ -176,8 +176,7 @@ async fn handle_message(
 
         rewrite_message(
             client,
-            channel_id,
-            message_event.origin.ts,
+            message_event.origin,
             content,
             member,
             &system,
@@ -200,8 +199,7 @@ async fn handle_message(
 
         rewrite_message(
             client,
-            channel_id,
-            message_event.origin.ts,
+            message_event.origin,
             content,
             member.into(),
             &system,
@@ -217,13 +215,17 @@ async fn handle_message(
 #[tracing::instrument(skip(client, db, system), fields(system_id = %system.id))]
 async fn rewrite_message(
     client: &SlackHyperClient,
-    channel_id: &SlackChannelId,
-    message_id: SlackTs,
+    origin: SlackMessageOrigin,
     mut content: SlackMessageContent,
     member: models::DetectedMember,
     system: &models::System,
     db: &SqlitePool,
 ) -> error_stack::Result<(), RewriteMessageError> {
+    let Some(channel_id) = origin.channel else {
+        debug!("No channel ID found in origin. Bot possibly doesn't have access. Bailing");
+        return Ok(());
+    };
+
     let token = SlackApiToken::new(system.slack_oauth_token.expose().into())
         .with_token_type(SlackApiTokenType::User);
     let user_session = client.open_session(&token);
@@ -283,6 +285,7 @@ async fn rewrite_message(
     }
 
     let message_request = SlackApiChatPostMessageRequest::new(channel_id.clone(), content)
+        .opt_thread_ts(origin.thread_ts)
         .with_username(member.display_name.clone())
         .opt_icon_url(member.profile_picture_url.clone());
 
@@ -313,7 +316,7 @@ async fn rewrite_message(
 
     user_session
         .chat_delete(
-            &SlackApiChatDeleteRequest::new(channel_id.clone(), message_id).with_as_user(true),
+            &SlackApiChatDeleteRequest::new(channel_id.clone(), origin.ts).with_as_user(true),
         )
         .await
         .change_context(RewriteMessageError::DeleteMessage)?;
