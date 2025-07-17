@@ -23,4 +23,7 @@ require_envs! {
 
     encryption_key?, "ENCRYPTION_KEY", String,
     "ENCRYPTION_KEY can be optionally set to a key for encrypting and decrypting the database";
+
+    base_url, "BASE_URL", String,
+    "BASE_URL should be set to the base URL for the bot. E.g https://plura.wobbl.in/";
 }

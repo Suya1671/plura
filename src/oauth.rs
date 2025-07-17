@@ -53,9 +53,7 @@ pub fn create_oauth_client() -> SlackOauthClient {
         .set_client_secret(ClientSecret::new(env::slack_client_secret()))
         .set_auth_uri(AuthUrl::new("https://slack.com/oauth/v2/authorize".to_owned()).unwrap())
         .set_token_uri(TokenUrl::new("https://slack.com/api/oauth.v2.access".to_owned()).unwrap())
-        .set_redirect_uri(
-            RedirectUrl::new("https://slack-system-bot.wobbl.in/auth".to_owned()).unwrap(),
-        )
+        .set_redirect_uri(RedirectUrl::new(format!("{}/auth", env::base_url())).unwrap())
 }
 
 #[derive(Deserialize)]
