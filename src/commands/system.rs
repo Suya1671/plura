@@ -25,10 +25,7 @@ use crate::{
 /// - /members for getting started with your members and their profiles.
 pub enum System {
     /// Creates a system for your profile
-    Create {
-        /// The name of your system
-        name: String,
-    },
+    Create,
     /// Re-authenticates your system with Slack
     Reauth,
     /// Get information about your or another user's system
@@ -53,7 +50,7 @@ impl System {
         state: SlackClientEventsUserState,
     ) -> Result<SlackCommandEventResponse, CommandError> {
         match self {
-            Self::Create { name } => Self::create_system(event, state, name).await,
+            Self::Create => Self::create_system(event, state).await,
             Self::Info { user } => Self::get_system_info(event, client, state, user).await,
             Self::Reauth => Self::reauth(event, state).await,
         }
@@ -170,7 +167,6 @@ impl System {
     async fn create_system(
         event: SlackCommandEvent,
         state: SlackClientEventsUserState,
-        name: String,
     ) -> Result<SlackCommandEventResponse, CommandError> {
         trace!("Creating system");
 
