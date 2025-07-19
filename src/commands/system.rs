@@ -184,7 +184,10 @@ impl System {
         {
             debug!(system_id = %system.id, "User already has a system");
             return Ok(SlackCommandEventResponse::new(
-                SlackMessageContent::new().with_text("You already have a system! If you need to reauthenticate, run /system reauth. If you need to change your system name, run /system rename".into()),
+                SlackMessageContent::new().with_text(
+                    "You already have a system! If you need to reauthenticate, run /system reauth."
+                        .into(),
+                ),
             ));
         }
 
@@ -241,7 +244,7 @@ macro_rules! fetch_system {
             ::tracing::debug!("User does not have a system");
             return Ok(SlackCommandEventResponse::new(
                 SlackMessageContent::new().with_text(
-                    "You don't have a system yet! Make one with `/system create <name>`".into(),
+                    "You don't have a system yet! Make one with `/system create`".into(),
                 ),
             ));
         };
