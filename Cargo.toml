@@ -52,6 +52,7 @@ indoc = "2.0.6"
 [features]
 encrypt = ["libsqlite3-sys/bundled-sqlcipher"]
 
-[profile.release]
-lto = "thin"
-codegen-units = 1
+# Really not needed for the current bot scale. Might add again later
+# [profile.release]
+# lto = "thin"
+# codegen-units = 1
