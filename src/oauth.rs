@@ -123,6 +123,7 @@ pub async fn oauth_handler(
                 r#"
                   INSERT INTO systems (name, owner_id, slack_oauth_token)
                   VALUES ($1, $2, $3)
+                  ON CONFLICT (owner_id) DO UPDATE SET slack_oauth_token = $3
                   RETURNING name
                 "#,
                 record.name,
