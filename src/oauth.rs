@@ -7,7 +7,7 @@ use oauth2::{
     TokenUrl, reqwest,
 };
 use serde::{Deserialize, Serialize};
-use slack_morphism::{SlackClient, SlackUserId, prelude::*};
+use slack_morphism::SlackUserId;
 use tracing::error;
 
 use crate::{
@@ -101,7 +101,6 @@ pub async fn oauth_handler(
     match csrf {
         Ok(Some(record)) => {
             let client = create_oauth_client();
-            let slack_client = SlackClient::new(SlackClientHyperConnector::new().unwrap());
 
             let response = client
                 .exchange_code(AuthorizationCode::new(code.code))
@@ -126,7 +125,7 @@ pub async fn oauth_handler(
                 record.owner_id.id,
                 user_token,
             )
-            .fetch_one(db)
+            .execute(db)
             .await;
 
             match user {
