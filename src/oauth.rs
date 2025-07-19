@@ -1,6 +1,6 @@
 use axum::{
     extract::{FromRequestParts, Query, State},
-    http::{StatusCode, request::Parts},
+    http::{self, StatusCode, request::Parts},
 };
 use oauth2::{
     AuthUrl, AuthorizationCode, ClientId, ClientSecret, EndpointNotSet, EndpointSet, RedirectUrl,
@@ -62,18 +62,17 @@ pub struct OauthCode {
     pub state: String,
 }
 
-pub struct Url(url::Url);
+#[derive(Debug)]
+pub struct Uri(http::Uri);
 
-impl<S> FromRequestParts<S> for Url
+impl<S> FromRequestParts<S> for Uri
 where
     S: Send + Sync,
 {
     type Rejection = (StatusCode, &'static str);
 
     async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
-        let url = url::Url::parse(&parts.uri.to_string())
-            .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid URL"))?;
-        Ok(Self(url))
+        Ok(Self(parts.uri.clone()))
     }
 }
 
@@ -81,7 +80,7 @@ where
 pub async fn oauth_handler(
     Query(code): Query<OauthCode>,
     State(state): State<user::State>,
-    Url(url): Url,
+    Uri(_uri): Uri,
 ) -> String {
     let db = &state.db;
 
@@ -145,34 +144,36 @@ pub async fn oauth_handler(
 
                     let response = format!("System for user {} authenticated!", record.owner_id.0);
 
-                    if let Err(e) = slack_client
-                        .post_webhook_message(
-                            &url,
-                            &SlackApiPostWebhookMessageRequest::new(
-                                SlackMessageContent::new()
-                                    .with_text(response.clone()),
-                            ),
-                        )
-                        .await {
-                            error!("Error sending Slack message: {:#?}", e);
-                        }
+                    // seemingly fails behind nest
+                    // if let Err(e) = slack_client
+                    //     .post_webhook_message(
+                    //         &url,
+                    //         &SlackApiPostWebhookMessageRequest::new(
+                    //             SlackMessageContent::new()
+                    //                 .with_text(response.clone()),
+                    //         ),
+                    //     )
+                    //     .await {
+                    //         error!("Error sending Slack message: {:#?}", e);
+                    //     }
 
                     response
                 }
                 Err(e) => {
                     let response = format!("Error creating system: {e:#?}");
 
-                    if let Err(e) = slack_client
-                        .post_webhook_message(
-                            &url,
-                            &SlackApiPostWebhookMessageRequest::new(
-                                SlackMessageContent::new()
-                                    .with_text(response.clone()),
-                            ),
-                        )
-                        .await {
-                            error!("Error sending Slack message: {:#?}", e);
-                        }
+                    // seemingly fails behind nest
+                    // if let Err(e) = slack_client
+                    //     .post_webhook_message(
+                    //         &url,
+                    //         &SlackApiPostWebhookMessageRequest::new(
+                    //             SlackMessageContent::new()
+                    //                 .with_text(response.clone()),
+                    //         ),
+                    //     )
+                    //     .await {
+                    //         error!("Error sending Slack message: {:#?}", e);
+                    //     }
 
                     error!("{response}");
                     response
