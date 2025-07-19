@@ -89,8 +89,7 @@ pub async fn oauth_handler(
     let csrf = sqlx::query!(
         r#"
         SELECT
-            owner_id as "owner_id: user::Id<Trusted>",
-            name
+            owner_id as "owner_id: user::Id<Trusted>"
         FROM
             system_oauth_process
         WHERE csrf = $1
@@ -121,12 +120,10 @@ pub async fn oauth_handler(
 
             let user = sqlx::query!(
                 r#"
-                  INSERT INTO systems (name, owner_id, slack_oauth_token)
-                  VALUES ($1, $2, $3)
-                  ON CONFLICT (owner_id) DO UPDATE SET slack_oauth_token = $3
-                  RETURNING name
+                  INSERT INTO systems (owner_id, slack_oauth_token)
+                  VALUES ($1, $2)
+                  ON CONFLICT (owner_id) DO UPDATE SET slack_oauth_token = $2
                 "#,
-                record.name,
                 record.owner_id.id,
                 user_token,
             )
@@ -134,7 +131,7 @@ pub async fn oauth_handler(
             .await;
 
             match user {
-                Ok(user) => {
+                Ok(_user) => {
                     sqlx::query!(
                         r#"
                         DELETE FROM system_oauth_process
@@ -146,7 +143,7 @@ pub async fn oauth_handler(
                     .await
                     .unwrap();
 
-                    let response = format!("System {} created!", user.name);
+                    let response = format!("System for user {} authenticated!", record.owner_id.0);
 
                     if let Err(e) = slack_client
                         .post_webhook_message(

@@ -29,11 +29,6 @@ pub enum System {
         /// The name of your system
         name: String,
     },
-    /// Edits your system name
-    Rename {
-        /// Your system's new name
-        name: String,
-    },
     /// Re-authenticates your system with Slack
     Reauth,
     /// Get information about your or another user's system
@@ -59,7 +54,6 @@ impl System {
     ) -> Result<SlackCommandEventResponse, CommandError> {
         match self {
             Self::Create { name } => Self::create_system(event, state, name).await,
-            Self::Rename { name } => Self::edit_system_name(event, state, name).await,
             Self::Info { user } => Self::get_system_info(event, client, state, user).await,
             Self::Reauth => Self::reauth(event, state).await,
         }
@@ -92,10 +86,9 @@ impl System {
 
         sqlx::query!(
             r#"
-            INSERT INTO system_oauth_process (name, owner_id, csrf)
-            VALUES ($1, $2, $3)
+            INSERT INTO system_oauth_process (owner_id, csrf)
+            VALUES ($1, $2)
             "#,
-            system.name,
             system.owner_id,
             secret
         )
@@ -155,19 +148,13 @@ impl System {
                 .change_context(CommandError::Sqlx)?;
 
             Ok(SlackCommandEventResponse::new(
-                SlackMessageContent::new().with_blocks(slack_blocks![
-                    some_into(
-                        SlackSectionBlock::new()
-                            .with_text(md!(format!("System name: {}", system.name)))
-                    ),
-                    some_into(SlackSectionBlock::new().with_text(md!(format!(
-                            "Fronting member: {}",
-                            fronting_member.map_or_else(
-                                || "No fronting member".to_string(),
-                                |m| m.display_name
-                            )
-                        ))))
-                ]),
+                SlackMessageContent::new().with_blocks(slack_blocks![some_into(
+                    SlackSectionBlock::new().with_text(md!(format!(
+                        "Fronting member: {}",
+                        fronting_member
+                            .map_or_else(|| "No fronting member".to_string(), |m| m.display_name)
+                    )))
+                )]),
             ))
         } else {
             debug!("User does not have a system");
@@ -177,29 +164,6 @@ impl System {
                 )]),
             ))
         }
-    }
-
-    #[tracing::instrument(skip(event, state), fields(system_id))]
-    async fn edit_system_name(
-        event: SlackCommandEvent,
-        state: SlackClientEventsUserState,
-        name: String,
-    ) -> Result<SlackCommandEventResponse, CommandError> {
-        trace!("Editing system name");
-
-        let states = state.read().await;
-        let user_state = states.get_user_state::<user::State>().unwrap();
-
-        fetch_system!(event, user_state => system_id);
-
-        system_id
-            .rename(&name, &user_state.db)
-            .await
-            .change_context(CommandError::Sqlx)?;
-
-        Ok(SlackCommandEventResponse::new(
-            SlackMessageContent::new().with_text("Successfully updated system name!".into()),
-        ))
     }
 
     #[tracing::instrument(skip(event, state))]
@@ -239,10 +203,9 @@ impl System {
 
         sqlx::query!(
             r#"
-            INSERT INTO system_oauth_process (name, owner_id, csrf)
-            VALUES ($1, $2, $3)
+            INSERT INTO system_oauth_process (owner_id, csrf)
+            VALUES ($1, $2)
             "#,
-            name,
             user_id.id,
             secret
         )

@@ -653,14 +653,13 @@ pub async fn info(
         some_into(
             SlackSectionBlock::new()
                 .with_text(md!(
-                    "*{}*\n{}{}\n*System*: {} ({})",
+                    "*{}*\n{}{}\n*System*: {}",
                     member.display_name,
                     member.pronouns.unwrap_or_default(),
                     member
                         .name_pronunciation
                         .map(|pronunciation| format!(" - {pronunciation}"))
                         .unwrap_or_default(),
-                    system.name,
                     system.owner_id.to_slack_format()
                 ))
                 .opt_accessory(member.profile_picture_url.and_then(|url| Some(

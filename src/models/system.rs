@@ -31,19 +31,6 @@ impl Id<Trusted> {
     }
 
     #[tracing::instrument(skip(db))]
-    pub async fn rename(self, new_name: &str, db: &SqlitePool) -> Result<(), sqlx::Error> {
-        sqlx::query!(
-            "UPDATE systems SET name = ? WHERE id = ?",
-            new_name,
-            self.id
-        )
-        .execute(db)
-        .await?;
-
-        Ok(())
-    }
-
-    #[tracing::instrument(skip(db))]
     pub async fn change_fronting_member(
         self,
         new_active_member_id: Option<member::Id<Trusted>>,
@@ -112,7 +99,6 @@ impl Id<Trusted> {
                 currently_fronting_member_id as "currently_fronting_member_id: member::Id<Trusted>",
                 auto_switch_on_trigger,
                 slack_oauth_token,
-                name,
                 created_at as "created_at: time::PrimitiveDateTime"
             FROM systems
             WHERE id = $1
@@ -160,8 +146,6 @@ pub struct System {
     pub currently_fronting_member_id: Option<member::Id<Trusted>>,
     /// Whether a [`trigger::Trigger`] activation changes the active member to the member the trigger is associated with
     pub auto_switch_on_trigger: bool,
-    /// The name of the system
-    pub name: String,
     /// The Slack OAuth token for the system
     pub slack_oauth_token: SlackOauthToken,
     pub created_at: time::PrimitiveDateTime,
@@ -185,7 +169,6 @@ impl System {
                 currently_fronting_member_id as "currently_fronting_member_id: member::Id<Trusted>",
                 auto_switch_on_trigger,
                 slack_oauth_token,
-                name,
                 created_at as "created_at: time::PrimitiveDateTime"
             FROM
                 systems
