@@ -85,6 +85,7 @@ impl System {
             r#"
             INSERT INTO system_oauth_process (owner_id, csrf)
             VALUES ($1, $2)
+            ON CONFLICT (owner_id) DO UPDATE SET csrf = $2
             "#,
             system.owner_id,
             secret
@@ -204,6 +205,7 @@ impl System {
             r#"
             INSERT INTO system_oauth_process (owner_id, csrf)
             VALUES ($1, $2)
+            ON CONFLICT (owner_id) DO UPDATE SET csrf = $2
             "#,
             user_id.id,
             secret
