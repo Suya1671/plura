@@ -1,9 +1,7 @@
 # Plura
 A slack bot designed to make the lives of plural systems easier. Inspired by PluralKit.
 
-<p align="center">
-  <video src="assets/demo.mp4"></video>
-</p>
+https://github.com/user-attachments/assets/cff44cd0-ed4f-4e28-9bac-db6f3a60e03d
 
 I'm not plural myself, but I do know a lot of Hack Club members that are plural and do want an easier way to differentiate between alters. Thus, I made this.
 It works similarly to PluralKit, by basically rewriting sent messages under different members using Slack's API.
