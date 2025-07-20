@@ -154,16 +154,12 @@ async fn handle_message(
         return Ok(());
     };
 
-    if let Some(ref message_content) = content.text {
-        let Some(member) = system
+    if let Some(ref message_content) = content.text
+        && let Some(member) = system
             .find_member_by_trigger_rules(&user_state.db, message_content)
             .await
             .change_context(PushEventError::MemberFetch)?
-        else {
-            debug!("Member not triggered");
-            return Ok(());
-        };
-
+    {
         fields!(member = ?&member);
         debug!("Member triggered");
 
