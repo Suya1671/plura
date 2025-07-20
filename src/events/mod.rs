@@ -9,7 +9,7 @@ use error_stack::{Result, ResultExt};
 use http_body_util::{BodyExt, Empty, Full, combinators::BoxBody};
 use slack_morphism::prelude::*;
 use sqlx::SqlitePool;
-use tracing::{debug, error, trace};
+use tracing::{debug, error, info, trace, warn};
 
 use crate::{
     BOT_TOKEN, fields,
@@ -113,7 +113,7 @@ async fn push_event_callback(
     }
 }
 
-#[tracing::instrument(skip(client, state))]
+#[tracing::instrument(skip(client, state, message_event), fields(message_id = ?message_event.origin.ts, sender_id = ?message_event.sender.user))]
 async fn handle_message(
     message_event: SlackMessageEvent,
     client: &SlackHyperClient,
@@ -184,6 +184,7 @@ async fn handle_message(
         )
         .await
         .change_context(PushEventError::MessageRewrite)?;
+
         return Ok(());
     }
 
@@ -221,8 +222,9 @@ async fn rewrite_message(
     system: &models::System,
     db: &SqlitePool,
 ) -> error_stack::Result<(), RewriteMessageError> {
+    info!("Rewriting message");
     let Some(channel_id) = origin.channel else {
-        debug!("No channel ID found in origin. Bot possibly doesn't have access. Bailing");
+        warn!("No channel ID found in origin. Bot possibly doesn't have access. Bailing");
         return Ok(());
     };
 
