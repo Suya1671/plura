@@ -27,7 +27,7 @@ use slack_morphism::prelude::*;
 use sqlx::{SqlitePool, sqlite::SqliteConnectOptions};
 use tower_http::trace::TraceLayer;
 use tracing::{debug, info, info_span, level_filters::LevelFilter};
-use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
+use tracing_subscriber::{EnvFilter, Layer, layer::SubscriberExt, util::SubscriberInitExt};
 
 /// The slack app token. Used for socket mode if we ever decide to use it.
 pub static APP_TOKEN: LazyLock<SlackApiToken> =
@@ -56,9 +56,9 @@ async fn main() -> error_stack::Result<ExitCode, Error> {
         .from_env_lossy();
 
     tracing_subscriber::registry()
-        .with(console_subscriber)
+        .with(console_subscriber.with_filter(env_subscriber))
         .with(error_subscriber)
-        .with(env_subscriber)
+        .with(tracing_journald::layer().ok())
         .init();
 
     if env::any_set() {

@@ -1764,6 +1764,7 @@ dependencies = [
  "tower-http",
  "tracing",
  "tracing-error",
+ "tracing-journald",
  "tracing-subscriber",
  "url",
 ]
@@ -3066,6 +3067,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8b1581020d7a273442f5b45074a6a57d5757ad0a47dac0e9f0bd57b81936f3db"
 dependencies = [
  "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "tracing-journald"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fc0b4143302cf1022dac868d521e36e8b27691f72c84b3311750d5188ebba657"
+dependencies = [
+ "libc",
+ "tracing-core",
  "tracing-subscriber",
 ]
 
