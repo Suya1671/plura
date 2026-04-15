@@ -342,34 +342,118 @@ fn rewrite_content(content: &mut SlackMessageContent, member: &models::DetectedM
 
     if let Some(blocks) = &mut content.blocks {
         for block in blocks {
-            if let SlackBlock::RichText(richtext) = block {
-                let elements = richtext["elements"].as_array_mut().unwrap();
-                let len = elements.len();
-                // The first and last elements would have the prefix and suffix respectively, so we can filter them
-                let first = elements.get_mut(0).unwrap();
+            let SlackBlock::RichText(richtext) = block else {
+                continue;
+            };
 
-                if let Some(first_text) = first.pointer_mut("/elements/0/text") {
-                    if member.typ == trigger::Type::Prefix {
-                        if let Some(new_text) = first_text
-                            .as_str()
-                            .and_then(|text| text.strip_prefix(&member.trigger_text))
-                            .map(ToString::to_string)
-                        {
-                            *first_text = serde_json::Value::String(new_text);
+            match member.typ {
+                trigger::Type::Prefix => {
+                    let Some(first) = richtext.elements.first_mut() else {
+                        continue;
+                    };
+
+                    match first {
+                        SlackRichTextElement::Section(section) => {
+                            let Some(SlackRichTextInlineElement::Text(text)) =
+                                section.elements.first_mut()
+                            else {
+                                continue;
+                            };
+
+                            if let Some(new_text) = text.text.strip_prefix(&member.trigger_text) {
+                                text.text = new_text.to_string();
+                            }
+                        }
+                        SlackRichTextElement::List(list) => {
+                            let Some(first_section) = list.elements.first_mut() else {
+                                continue;
+                            };
+                            let Some(SlackRichTextInlineElement::Text(text)) =
+                                first_section.elements.first_mut()
+                            else {
+                                continue;
+                            };
+
+                            if let Some(new_text) = text.text.strip_prefix(&member.trigger_text) {
+                                text.text = new_text.to_string();
+                            }
+                        }
+                        SlackRichTextElement::Preformatted(preformatted) => {
+                            let Some(SlackRichTextInlineElement::Text(text)) =
+                                preformatted.elements.first_mut()
+                            else {
+                                continue;
+                            };
+
+                            if let Some(new_text) = text.text.strip_prefix(&member.trigger_text) {
+                                text.text = new_text.to_string();
+                            }
+                        }
+                        SlackRichTextElement::Quote(quote) => {
+                            let Some(SlackRichTextInlineElement::Text(text)) =
+                                quote.elements.first_mut()
+                            else {
+                                continue;
+                            };
+
+                            if let Some(new_text) = text.text.strip_prefix(&member.trigger_text) {
+                                text.text = new_text.to_string();
+                            }
                         }
                     }
                 }
+                trigger::Type::Suffix => {
+                    let Some(last) = richtext.elements.last_mut() else {
+                        continue;
+                    };
 
-                let last = elements.get_mut(len - 1).unwrap();
+                    match last {
+                        SlackRichTextElement::Section(section) => {
+                            let Some(SlackRichTextInlineElement::Text(text)) =
+                                section.elements.last_mut()
+                            else {
+                                continue;
+                            };
 
-                if let Some(last_text) = last.pointer_mut("/elements/0/text") {
-                    if member.typ == trigger::Type::Suffix {
-                        if let Some(new_text) = last_text
-                            .as_str()
-                            .and_then(|text| text.strip_suffix(&member.trigger_text))
-                            .map(ToString::to_string)
-                        {
-                            *last_text = serde_json::Value::String(new_text);
+                            if let Some(new_text) = text.text.strip_suffix(&member.trigger_text) {
+                                text.text = new_text.to_string();
+                            }
+                        }
+                        SlackRichTextElement::List(list) => {
+                            let Some(last_section) = list.elements.last_mut() else {
+                                continue;
+                            };
+                            let Some(SlackRichTextInlineElement::Text(text)) =
+                                last_section.elements.last_mut()
+                            else {
+                                continue;
+                            };
+
+                            if let Some(new_text) = text.text.strip_suffix(&member.trigger_text) {
+                                text.text = new_text.to_string();
+                            }
+                        }
+                        SlackRichTextElement::Preformatted(preformatted) => {
+                            let Some(SlackRichTextInlineElement::Text(text)) =
+                                preformatted.elements.last_mut()
+                            else {
+                                continue;
+                            };
+
+                            if let Some(new_text) = text.text.strip_suffix(&member.trigger_text) {
+                                text.text = new_text.to_string();
+                            }
+                        }
+                        SlackRichTextElement::Quote(quote) => {
+                            let Some(SlackRichTextInlineElement::Text(text)) =
+                                quote.elements.last_mut()
+                            else {
+                                continue;
+                            };
+
+                            if let Some(new_text) = text.text.strip_suffix(&member.trigger_text) {
+                                text.text = new_text.to_string();
+                            }
                         }
                     }
                 }

@@ -402,7 +402,7 @@ impl Member {
                     ))
                     .opt_accessory(member.profile_picture_url.and_then(|url| Some(
                         SlackSectionBlockElement::Image(SlackBlockImageElement::new(
-                            url.parse().ok()?,
+                            url.parse::<url::Url>().ok()?.into(),
                             "Profile picture".into()
                         ))
                     )))
